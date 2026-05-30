@@ -143,31 +143,6 @@ struct TitlebarTabView: View {
     }
 }
 
-// MARK: - TitleBar
-// Sits in the transparent titlebar region.
-// .padding(.top, 12) aligns tab buttons with the traffic-light buttons (close/min/max).
-
-struct TitleBar: View {
-    @Binding var tab: AppTab
-
-    var body: some View {
-        HStack(spacing: 0) {
-            // Leave space for traffic lights (≈ 72 pt)
-            Spacer().frame(width: 76)
-
-            HStack(spacing: 4) {
-                ForEach(AppTab.allCases) { t in
-                    TitleTabButton(t, selected: tab == t) { tab = t }
-                }
-            }
-            Spacer()
-        }
-        .frame(height: 44)
-        .padding(.top, 8)          // optical alignment with traffic lights
-        .background(DS.surface)
-    }
-}
-
 struct TitleTabButton: View {
     let tab: AppTab
     let selected: Bool
@@ -1570,7 +1545,6 @@ struct DNSHelperSection: View {
     private var statusText: String {
         switch helperState {
         case .uninstalled:           return "Not installed"
-        case .awaitingUserApproval:  return "Awaiting approval in System Settings"
         case .applying:              return "Working…"
         case .installed:             return "Active"
         case .error(let message):    return "Error: \(message)"
@@ -1580,7 +1554,6 @@ struct DNSHelperSection: View {
     private var statusColor: Color {
         switch helperState {
         case .uninstalled:            return DS.sec
-        case .awaitingUserApproval:   return DS.orange
         case .applying:               return DS.orange
         case .installed:              return DS.green
         case .error:                  return DS.red
@@ -1590,7 +1563,6 @@ struct DNSHelperSection: View {
     private var actionLabel: String {
         switch helperState {
         case .uninstalled, .error:   return "Install"
-        case .awaitingUserApproval:  return "Open Settings"
         case .applying:              return "Working…"
         case .installed:             return "Uninstall"
         }
@@ -1650,7 +1622,7 @@ struct DNSHelperSection: View {
             switch helperState {
             case .installed:
                 await appState.dnsApplier.uninstall()
-            case .uninstalled, .error, .awaitingUserApproval:
+            case .uninstalled, .error:
                 await appState.dnsApplier.install()
             case .applying:
                 break

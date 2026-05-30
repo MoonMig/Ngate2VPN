@@ -81,8 +81,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Timestamp of the last dismissed alert. Subsequent alerts within
     /// 1.5 seconds are suppressed — this catches the case where ngate
     /// emits two log lines for the same failure.
-    private var lastAlertDismissedAt: Date?
-
     private let windowFrameKey = "mainWindowFrame"
 
     // MARK: - NSWindowDelegate
@@ -502,7 +500,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         alertIsPresenting = true
         defer {
             alertIsPresenting = false
-            lastAlertDismissedAt = Date()
         }
 
         // ignoringOtherApps brings the alert above whatever app the user is
@@ -516,10 +513,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         alert.addButton(withTitle: "OK")
         alert.runModal()
 
-        appState.dismissAlert()
-    }
-
-    private func dismissErrorNotification() {
         appState.dismissAlert()
     }
 
@@ -545,32 +538,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
             .store(in: &cancellables)
-    }
-    
-    private func updateStatusBarAppearance() {
-        let statuses = appState.runtime.map { $0.value.status }
-        let symbolName: String
-        let color: NSColor
-        if statuses.contains(.running) {
-            symbolName = "circle.fill"
-            color = .systemGreen
-        } else if statuses.contains(.degraded) {
-            symbolName = "exclamationmark.circle.fill"
-            color = .systemOrange
-        } else if statuses.contains(.starting) || statuses.contains(.stopping) {
-            symbolName = "circle.dotted"
-            color = .systemYellow
-        } else {
-            symbolName = "circle"
-            color = .systemGray
-        }
-        if let button = statusItem?.button,
-           let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil) {
-            let configuredImage = image.withSymbolConfiguration(.init(pointSize: 14, weight: .medium))
-            configuredImage?.isTemplate = true
-            button.image = configuredImage
-            button.contentTintColor = color
-        }
     }
     
     private func rebuildMenu() {
@@ -679,8 +646,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     
     @objc private func quit() {
-        appState.persist()
-        appState.shutdown()
         NSApplication.shared.terminate(nil)
     }
 }

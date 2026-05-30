@@ -5,6 +5,18 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 проект следует [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [3.6] — 2026-05-30
+
+### Удалено (мёртвый код)
+- `updateStatusBarAppearance()` и `dismissErrorNotification()` в `AppDelegate` — нигде не вызывались.
+- `lastAlertDismissedAt: Date?` — только записывалось, никогда не читалось.
+- `applyCurrentPolicy()` — однострочная обёртка, заменена прямым вызовом.
+- `DNSHelperState.awaitingUserApproval` — legacy case от SMAppService, никогда не устанавливался; убран вместе со всеми обработчиками в ContentView.
+- `struct TitleBar` — мёртвая структура, заменена `TitlebarTabView` через `NSToolbar`.
+
+### Исправлено
+- `quit()` в трей-меню: убраны избыточные `persist()` и `shutdown()` перед `terminate(nil)`, которые гонялись с DNS cleanup в `applicationShouldTerminate`.
+
 ## [3.5] — 2026-05-30
 
 ### Удалено (мёртвый код)

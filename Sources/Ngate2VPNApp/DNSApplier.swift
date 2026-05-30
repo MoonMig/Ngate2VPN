@@ -17,10 +17,6 @@ private let kSudoersPath = "/etc/sudoers.d/ngate2vpn"
 enum DNSHelperState: Equatable {
     /// Not yet activated — no /etc/resolver/ files created.
     case uninstalled
-    /// Legacy SMAppService UI state. Never set by the sudoers-based
-    /// implementation, but kept so DNSHelperSection's exhaustive switches
-    /// continue to compile.
-    case awaitingUserApproval
     /// Currently writing files (running a privileged command).
     case applying
     /// Active — split-DNS files are installed under /etc/resolver/ and
@@ -195,7 +191,7 @@ final class DNSApplier: ObservableObject {
         // wants now" and apply it — same code path as a normal change,
         // no extra prompts.
         subscribeToPolicy()
-        Task { await applyCurrentPolicy() }
+        Task { self.enqueuePolicyApplication(self.policyController.policy) }
     }
 
     private func diag(_ message: String, level: SystemLogLevel = .info) {
@@ -397,10 +393,6 @@ final class DNSApplier: ObservableObject {
             .sink { [weak self] policy in
                 self?.enqueuePolicyApplication(policy)
             }
-    }
-
-    private func applyCurrentPolicy() async {
-        enqueuePolicyApplication(policyController.policy)
     }
 
     /// Policy changes can arrive faster than the privileged helper returns.
