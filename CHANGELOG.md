@@ -5,6 +5,16 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 проект следует [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [3.9] — 2026-05-30
+
+### Исправлено
+- **`binaryPath` не сохранялся при закрытом окне.** Persist вызывался только через `ContentView.onChange` — если окно не было открыто, изменение пути к бинарнику не сохранялось. Перенесено в `AppState.init` через `$binaryPath.sink`, аналогично `hideDockOnClose`.
+- **`diag()` в `DNSApplier` всегда логировал в OSLog как `.info`.** Warning/Error-сообщения теперь используют соответствующие уровни OSLog.
+- **`deleteOldLogs` запускался при каждом создании `FileLogger`** — при N туннелях N параллельных cleanup-задач. Перенесено в `AppState.init`, запускается один раз.
+- **`objectWillChange` подписка вызывала `rebuildMenu()` на каждую строку лога.** При `-vvvv` это 500+ пересборок NSMenu в секунду. Меню перестраивается только через `menuWillOpen` — перед каждым показом пользователю.
+- `ErrorLog.timestampFormatter` — `DateFormatter` стал статическим.
+- Убрана мёртвая `else { closeAlertWindow() }` ветка в `setupAlertObserver`.
+
 ## [3.8] — 2026-05-30
 
 ### Исправлено

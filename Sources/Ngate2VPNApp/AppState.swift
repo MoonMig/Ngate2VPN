@@ -256,9 +256,17 @@ final class AppState: ObservableObject {
             .sink { [weak self] _ in self?.persist() }
             .store(in: &cancellables)
 
+        $binaryPath
+            .sink { [weak self] _ in self?.persist() }
+            .store(in: &cancellables)
+
         startWatchdog()
         migratePersistedSecretsToKeychainIfNeeded()
         persist()
+
+        Task.detached(priority: .background) {
+            await LogWriterActor.deleteOldLogs(olderThanDays: 30)
+        }
 
         // Sync holdDefaultDNS from storage before the first policy application
         // so the correct value is used even if the Settings tab is never opened.
@@ -530,12 +538,10 @@ final class AppState: ObservableObject {
         if containsControlCharacters(t.endpointURL) { i.append("URL contains unsupported characters") }
         if t.authMethod == .certificate {
             if t.serialNumber.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { i.append("cert") }
-            if t.pinCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { i.append("PIN") }
             if containsControlCharacters(t.serialNumber) { i.append("cert contains unsupported characters") }
             if containsControlCharacters(t.pinCode) { i.append("PIN contains unsupported characters") }
         } else {
             if t.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { i.append("user") }
-            if t.password.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { i.append("pass") }
             if containsControlCharacters(t.username) { i.append("user contains unsupported characters") }
             if containsControlCharacters(t.password) { i.append("pass contains unsupported characters") }
         }
@@ -746,12 +752,10 @@ final class AppState: ObservableObject {
             } else {
                 formattedLine = "\(datePrefix) \(ts) \(t)"
             }
-            let diskLine = formattedLine
-
             r.logLines.append(formattedLine)
             Self.trimLogBuffer(&r.logLines, target: maxLogLinesPerTunnel, slack: logTrimSlack)
             runtime[id] = r
-            logger(for: id).append(line: diskLine)
+            logger(for: id).append(line: formattedLine)
 
             let normalized = t.lowercased()
             if let clientAddress = NgateOutputParser.extractClientAddress(from: t) {
@@ -795,15 +799,10 @@ final class AppState: ObservableObject {
     
     
     private func updateTrayIcon() {
-        var connectedCount = 0
-        let activeTunnelIDs = Set(runtime.keys)
-        for id in activeTunnelIDs {
-            if runtime[id]?.status == .running || runtime[id]?.status == .degraded {
-                connectedCount += 1
-            }
-        }
-        let totalTunnels = activeTunnelIDs.count
-        statusIconManager?.updateIcon(connectedCount: connectedCount, totalTunnels: totalTunnels)
+        let connectedCount = runtime.values.filter {
+            $0.status == .running || $0.status == .degraded
+        }.count
+        statusIconManager?.updateIcon(connectedCount: connectedCount, totalTunnels: runtime.count)
     }
 
     private func canStartTunnel(_ id: UUID) -> Bool {
@@ -941,18 +940,6 @@ final class AppState: ObservableObject {
         transitionState(id: tunnelID, newState: .failed, errorMessage: timeoutError.message, tunnelError: timeoutError)
         processManager.forceKill(tunnelID: tunnelID)
         return .failed
-    }
-
-    private func saveSecret(account: String, value: String) throws {
-        try keychain.saveSecret(account: account, value: value)
-    }
-
-    private func getSecret(account: String) throws -> String? {
-        try keychain.getSecret(account: account)
-    }
-
-    private func deleteSecret(account: String) throws {
-        try keychain.deleteSecret(account: account)
     }
 
     private func applyConnectionError(_ error: TunnelError, to id: UUID, alertMessage: String? = nil) {
@@ -1109,26 +1096,26 @@ final class AppState: ObservableObject {
         switch configuration.authMethod {
         case .certificate:
             do {
-                try deleteSecret(account: passwordAccount(for: configuration.id))
+                try keychain.deleteSecret(account: passwordAccount(for: configuration.id))
             } catch {
                 appendSystemLog("Failed to clear credentials from Keychain.", to: configuration.id, level: .warning)
             }
             if !configuration.pinCode.isEmpty {
                 do {
-                    try saveSecret(account: pinAccount(for: configuration.id), value: configuration.pinCode)
+                    try keychain.saveSecret(account: pinAccount(for: configuration.id), value: configuration.pinCode)
                 } catch {
                     appendSystemLog("Failed to save credentials to Keychain.", to: configuration.id, level: .warning)
                 }
             }
         case .credentials:
             do {
-                try deleteSecret(account: pinAccount(for: configuration.id))
+                try keychain.deleteSecret(account: pinAccount(for: configuration.id))
             } catch {
                 appendSystemLog("Failed to clear credentials from Keychain.", to: configuration.id, level: .warning)
             }
             if !configuration.password.isEmpty {
                 do {
-                    try saveSecret(account: passwordAccount(for: configuration.id), value: configuration.password)
+                    try keychain.saveSecret(account: passwordAccount(for: configuration.id), value: configuration.password)
                 } catch {
                     appendSystemLog("Failed to save credentials to Keychain.", to: configuration.id, level: .warning)
                 }
@@ -1138,8 +1125,8 @@ final class AppState: ObservableObject {
 
     private func deleteStoredSecrets(for tunnelID: UUID) {
         do {
-            try deleteSecret(account: passwordAccount(for: tunnelID))
-            try deleteSecret(account: pinAccount(for: tunnelID))
+            try keychain.deleteSecret(account: passwordAccount(for: tunnelID))
+            try keychain.deleteSecret(account: pinAccount(for: tunnelID))
         } catch {
             appendSystemLog("Failed to delete credentials from Keychain.", to: tunnelID, level: .warning)
         }
@@ -1150,7 +1137,7 @@ final class AppState: ObservableObject {
         do {
             switch resolved.authMethod {
             case .certificate:
-                guard let pin = try getSecret(account: pinAccount(for: tunnelID)), !pin.isEmpty else {
+                guard let pin = try keychain.getSecret(account: pinAccount(for: tunnelID)), !pin.isEmpty else {
                     let message = "PIN not found in Keychain. Open the profile and save your PIN first."
                     appendSystemLog(message, to: tunnelID, level: .error)
                     transitionState(id: tunnelID, newState: .failed, errorMessage: message, tunnelError: .launchFailed)
@@ -1159,7 +1146,7 @@ final class AppState: ObservableObject {
                 }
                 resolved.pinCode = pin
             case .credentials:
-                guard let password = try getSecret(account: passwordAccount(for: tunnelID)), !password.isEmpty else {
+                guard let password = try keychain.getSecret(account: passwordAccount(for: tunnelID)), !password.isEmpty else {
                     let message = "Password not found in Keychain. Open the profile and save your password first."
                     appendSystemLog(message, to: tunnelID, level: .error)
                     transitionState(id: tunnelID, newState: .failed, errorMessage: message, tunnelError: .launchFailed)

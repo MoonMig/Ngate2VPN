@@ -448,14 +448,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         statusItem?.behavior = .removalAllowed
         statusItem?.isVisible = true
         
-        if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "network", accessibilityDescription: "Ngate VPN")
-        }
-        
         // Initialise the tray icon manager.
-        Task { @MainActor in
+        if let item = statusItem {
             statusIconManager = StatusIconManager()
-            statusIconManager?.setup(statusItem: statusItem!)
+            statusIconManager?.setup(statusItem: item)
             appState.statusIconManager = statusIconManager
         }
         
@@ -468,15 +464,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     
     private func setupAlertObserver() {
-        // ���ѧҧݧ�էѧ֧� �٧� �ڧ٧ާ֧ߧ֧ߧڧ�ާ� �������ߧڧ� �ѧݧ֧���
         appState.$isAlertPresented
             .receive(on: DispatchQueue.main)
             .sink { [weak self] isPresented in
-                if isPresented {
-                    self?.showAlertWindow()
-                } else {
-                    self?.closeAlertWindow()
-                }
+                if isPresented { self?.showAlertWindow() }
             }
             .store(in: &cancellables)
     }
@@ -523,13 +514,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     
     private func startObserving() {
-        appState.objectWillChange
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.rebuildMenu()
-            }
-            .store(in: &cancellables)
-        
         appState.$hideDockOnClose
             .receive(on: DispatchQueue.main)
             .sink { shouldHide in

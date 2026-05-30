@@ -84,11 +84,6 @@ final class FileLogger: @unchecked Sendable {
             }
         }
 
-        // Old-log cleanup runs once per logger instance, off the hot
-        // path. Cheap and idempotent.
-        Task.detached(priority: .background) {
-            await LogWriterActor.deleteOldLogs(olderThanDays: 30)
-        }
     }
 
     deinit {
@@ -296,9 +291,13 @@ actor ErrorLog {
         }
     }
 
-    private func formattedNow() -> String {
+    private static let timestampFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
-        return f.string(from: Date())
+        return f
+    }()
+
+    private func formattedNow() -> String {
+        Self.timestampFormatter.string(from: Date())
     }
 }

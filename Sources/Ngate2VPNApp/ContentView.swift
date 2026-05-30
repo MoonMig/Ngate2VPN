@@ -101,7 +101,6 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(DS.bg)
         .animation(.easeInOut(duration: 0.15), value: appState.selectedTab)
-        .onChange(of: appState.binaryPath) { _ in appState.persist() }
         .onChange(of: appTheme) { _ in applyAppearance() }
         .onAppear { applyAppearance() }
     }

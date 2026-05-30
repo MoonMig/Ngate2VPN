@@ -195,7 +195,11 @@ final class DNSApplier: ObservableObject {
     }
 
     private func diag(_ message: String, level: SystemLogLevel = .info) {
-        logger.info("\(message, privacy: .public)")
+        switch level {
+        case .info:    logger.info("\(message, privacy: .public)")
+        case .warning: logger.warning("\(message, privacy: .public)")
+        case .error, .critical: logger.error("\(message, privacy: .public)")
+        }
         onDiagnostic?(message, level)
     }
 
