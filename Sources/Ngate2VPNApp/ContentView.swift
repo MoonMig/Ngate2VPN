@@ -560,6 +560,7 @@ struct JournalView: View {
         var result: [UnifiedLogEntry] = []
         if showSystem {
             for line in appState.systemLogLines {
+                if !lineMatches(level: logLevel, line: line) { continue }
                 result.append(UnifiedLogEntry(tunnelID: nil, tunnelTitle: nil, text: line))
             }
         }
@@ -569,10 +570,9 @@ struct JournalView: View {
             let lines = appState.snapshot(for: tunnel.id)?.runtime.logLines ?? []
             for line in lines {
                 if isSystemLog(line) {
-                    // [SYSTEM] lines are gated by the System pill.
                     if !showSystem { continue }
+                    if !lineMatches(level: logLevel, line: line) { continue }
                 } else {
-                    // Apply log-level filter to non-SYSTEM lines.
                     if !lineMatches(level: logLevel, line: line) { continue }
                 }
                 result.append(UnifiedLogEntry(tunnelID: tunnel.id, tunnelTitle: title, text: line))
