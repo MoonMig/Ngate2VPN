@@ -9,6 +9,7 @@
 #
 # Output:
 #   build/Ngate2VPN.app
+#   build/Ngate2VPN-<version>.dmg
 
 set -e
 
@@ -100,5 +101,22 @@ echo ""
 echo "✓ Built: $APP_DIR"
 echo "  Contents:"
 find "$APP_DIR/Contents" -type f -print | sed "s|$APP_DIR||" | sort | sed 's/^/    /'
+
+echo ""
+echo "==> Creating DMG…"
+DMG_DIR="$(pwd)/build/.dmg-staging"
+DMG_PATH="$(pwd)/build/Ngate2VPN-${APP_VERSION}.dmg"
+rm -rf "$DMG_DIR"
+mkdir -p "$DMG_DIR"
+cp -R "$APP_DIR" "$DMG_DIR/"
+ln -s /Applications "$DMG_DIR/Applications"
+hdiutil create \
+    -volname "Ngate2VPN ${APP_VERSION}" \
+    -srcfolder "$DMG_DIR" \
+    -ov -format UDZO \
+    "$DMG_PATH" 2>/dev/null
+rm -rf "$DMG_DIR"
+
+echo "✓ DMG:   $DMG_PATH"
 echo ""
 echo "Run with:  open \"$APP_DIR\""
