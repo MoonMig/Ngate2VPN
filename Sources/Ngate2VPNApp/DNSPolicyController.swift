@@ -247,8 +247,7 @@ final class NgateGatewayResponseParser {
         }
         let after = raw[levelRange.upperBound...]
         // Drop leading spaces/tabs that ngate uses for indentation
-        return String(after).drop(while: { $0 == " " || $0 == "\t" })
-            .description
+        return String(String(after).drop(while: { $0 == " " || $0 == "\t" }))
     }
 
     /// Feed one log line. When this method returns a non-empty array,

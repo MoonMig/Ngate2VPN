@@ -150,6 +150,12 @@ The tray menu is rebuilt **only** in `menuWillOpen(_:)` (i.e. just before the us
 
 `[SYSTEM]` log lines are subject to the same log-level filter (`lineMatches`) as regular ngate lines. Both paths (tunnel-scoped `[SYSTEM]` lines and app-wide `systemLogLines`) must apply the filter. Do not gate `[SYSTEM]` lines on the System pill alone.
 
+### `connectAndWait` retry logic
+
+`connectAndWait` has two nested `while` loops. The outer loop calls `connectTunnel` and increments `attempts`. The inner loop polls status every 200 ms.
+
+**Critical**: when a retryable failure is detected (`.failed` or `.stopped` with `canRetry == true`), the code must use `continue outerLoop` (labeled continue) — NOT a bare `break`. A bare `break` exits only the `switch` statement, leaving the inner `while` running and never calling `connectTunnel` again. This was a bug that caused all tunnels except the first to hang in "Connecting" indefinitely.
+
 ## Key invariants
 
 - Credentials (`pinCode`, `password`) must never reach `UserDefaults` or logs. Always call `sanitizedConfiguration` before persisting.

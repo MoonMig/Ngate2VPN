@@ -891,7 +891,7 @@ final class AppState: ObservableObject {
         }
 
         let deadline = Date().addingTimeInterval(startupTimeout)
-        while Date() < deadline {
+        outerLoop: while Date() < deadline {
             attempts += 1
             connectTunnel(tunnelID)
             guard runtime[tunnelID] != nil else { return .failed }
@@ -912,7 +912,7 @@ final class AppState: ObservableObject {
                     if canRetry {
                         appendSystemLog("Retrying after \(lastError?.message ?? "retryable error")", to: tunnelID, level: .warning)
                         try? await Task.sleep(nanoseconds: 1_000_000_000)
-                        break
+                        continue outerLoop
                     }
                     return .failed
                 case .degraded:
@@ -924,7 +924,7 @@ final class AppState: ObservableObject {
                         if canRetry {
                             appendSystemLog("Retrying after \(lastError?.message ?? "retryable error")", to: tunnelID, level: .warning)
                             try? await Task.sleep(nanoseconds: 1_000_000_000)
-                            break
+                            continue outerLoop
                         }
                         return .failed
                     }
