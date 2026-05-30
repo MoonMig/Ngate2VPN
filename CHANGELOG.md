@@ -5,6 +5,13 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 проект следует [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [3.7] — 2026-05-30
+
+### Удалено (мёртвый код)
+- `ErrorLog.snapshot()` — нигде не вызывался.
+- `KeychainSecretStoreError.internalStatus` — нигде не использовалось.
+- `PersistedState.CodingKeys` и кастомный `init(from:)` — полностью повторяли автосинтез Swift.
+
 ## [3.6] — 2026-05-30
 
 ### Удалено (мёртвый код)

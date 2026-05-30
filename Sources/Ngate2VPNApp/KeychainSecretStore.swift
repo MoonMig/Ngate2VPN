@@ -12,11 +12,6 @@ enum KeychainSecretStoreError: LocalizedError {
         "Failed to load credentials."
     }
 
-    /// OSStatus for internal diagnostics only — never surfaced to logs or UI.
-    var internalStatus: OSStatus? {
-        if case .unhandled(let s) = self { return s }
-        return nil
-    }
 }
 
 struct KeychainSecretStore {

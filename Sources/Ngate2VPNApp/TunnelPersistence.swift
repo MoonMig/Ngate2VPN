@@ -15,26 +15,6 @@ struct PersistedState: Codable {
     var hideDockOnClose: Bool
     var tunnels: [TunnelConfiguration]
 
-    init(binaryPath: String,
-         hideDockOnClose: Bool,
-         tunnels: [TunnelConfiguration]) {
-        self.binaryPath = binaryPath
-        self.hideDockOnClose = hideDockOnClose
-        self.tunnels = tunnels
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case binaryPath
-        case hideDockOnClose
-        case tunnels
-    }
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        binaryPath = try c.decode(String.self, forKey: .binaryPath)
-        hideDockOnClose = try c.decode(Bool.self, forKey: .hideDockOnClose)
-        tunnels = try c.decode([TunnelConfiguration].self, forKey: .tunnels)
-    }
 }
 
 // MARK: - TunnelPersistence

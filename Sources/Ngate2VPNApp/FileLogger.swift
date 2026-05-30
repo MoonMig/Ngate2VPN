@@ -296,11 +296,6 @@ actor ErrorLog {
         }
     }
 
-    /// Returns a snapshot of recent errors.
-    func snapshot() -> [String] {
-        recentErrors
-    }
-
     private func formattedNow() -> String {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
