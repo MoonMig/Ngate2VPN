@@ -1013,11 +1013,7 @@ final class AppState: ObservableObject {
         let now = Date()
         let tunnelIDs = tunnels.map(\.id)
         for tunnelID in tunnelIDs {
-            guard tunnels.contains(where: { $0.id == tunnelID }) else {
-                watchdogTask?.cancel()
-                watchdogTask = nil
-                return
-            }
+            guard tunnels.contains(where: { $0.id == tunnelID }) else { continue }
             guard deletingTunnelIDs.contains(tunnelID) == false else { continue }
             guard let runtimeState = runtime[tunnelID] else {
                 // runtime entry missing for a known tunnel — transient inconsistency

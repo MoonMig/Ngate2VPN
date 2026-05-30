@@ -5,6 +5,12 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 проект следует [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [3.4] — 2026-05-30
+
+### Исправлено
+- **Критическая ошибка watchdog:** при удалении туннеля во время `await` в `runWatchdogPass` код выполнял `return` вместо `continue`, что отменяло только что пересозданный watchdog task и останавливало наблюдение за всеми оставшимися туннелями.
+- **Мёртвый код:** удалён неиспользуемый метод `updateMinWidth` в `AppDelegate`.
+
 ## [3.3] — 2026-05-30
 
 ### Улучшено

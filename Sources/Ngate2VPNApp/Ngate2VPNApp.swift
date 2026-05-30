@@ -190,15 +190,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return NSWindowController(window: window)
     }
     
-    private func updateMinWidth(for window: NSWindow) {
-        window.layoutIfNeeded()
-        let trafficLights: CGFloat = 76
-        let tabItemWidth = window.toolbar?.visibleItems?.first?.view?.frame.width ?? 300
-        let minW = trafficLights + tabItemWidth + 30
-        let current = window.minSize
-        window.minSize = NSSize(width: max(minW, 340), height: current.height)
-    }
-
     private func saveWindowFrame(_ window: NSWindow) {
         let frameData = try? NSKeyedArchiver.archivedData(withRootObject: NSValue(rect: window.frame), requiringSecureCoding: false)
         UserDefaults.standard.set(frameData, forKey: windowFrameKey)
