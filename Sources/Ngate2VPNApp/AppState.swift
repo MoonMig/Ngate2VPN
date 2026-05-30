@@ -871,8 +871,9 @@ final class AppState: ObservableObject {
 
         if Task.isCancelled { return }
 
-        let succeeded = results.filter { $0.ok }.count
-        let failed = results.filter { !$0.ok }.map { $0.title }
+        var succeeded = 0
+        var failed: [String] = []
+        for r in results { if r.ok { succeeded += 1 } else { failed.append(r.title) } }
 
         if failed.isEmpty {
             appendBulkSystemLog("Connect All finished — \(succeeded) tunnel\(succeeded == 1 ? "" : "s") connected")

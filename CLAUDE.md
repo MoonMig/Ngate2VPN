@@ -134,6 +134,22 @@ The About panel reads its version from `Bundle.main.infoDictionary["CFBundleShor
 
 The whole UI is one file. Colors come from the `DS` design-token enum (each token has a dark/light pair via `NSColor(name:dynamicProvider:)`); corner radii are `DS.r` (10) and `DS.rL` (14). The status-bar (tray) icon is managed by `StatusIconManager` — it tints a `globe` SF Symbol; the disconnected state uses `NSColor.secondaryLabelColor` (NOT a fixed white/black) so it stays visible on both light and dark menu bars.
 
+### Persistence of settings
+
+Both `binaryPath` and `hideDockOnClose` are persisted via `@Published` sinks in `AppState.init()` — not via UI-side `onChange`. Adding new persisted `@Published` properties must follow the same pattern (add `$property.sink { [weak self] _ in self?.persist() }` in `init`). Do NOT rely on `ContentView.onChange` for persistence — the window may be closed when the value changes.
+
+### Tray menu updates
+
+The tray menu is rebuilt **only** in `menuWillOpen(_:)` (i.e. just before the user sees it). There is intentionally no `objectWillChange` subscription driving `rebuildMenu()` — that pattern caused 500+ rebuilds/sec at `-vvvv` log verbosity. `menuWillOpen` is sufficient because menu items are only visible when open.
+
+### Old-log cleanup
+
+`LogWriterActor.deleteOldLogs(olderThanDays:)` is called **once** in `AppState.init()` as a detached background task. Do not call it from `FileLogger.init()` — that would run N concurrent cleanup sweeps for N tunnels, producing spurious `ErrorLog` entries from concurrent file-delete races.
+
+### Journal level filter
+
+`[SYSTEM]` log lines are subject to the same log-level filter (`lineMatches`) as regular ngate lines. Both paths (tunnel-scoped `[SYSTEM]` lines and app-wide `systemLogLines`) must apply the filter. Do not gate `[SYSTEM]` lines on the System pill alone.
+
 ## Key invariants
 
 - Credentials (`pinCode`, `password`) must never reach `UserDefaults` or logs. Always call `sanitizedConfiguration` before persisting.
@@ -143,6 +159,7 @@ The whole UI is one file. Colors come from the `DS` design-token enum (each toke
 - `reapplyCurrentPolicy()` must **not** clear `writtenScopedResolvers` — doing so races with the subscription and produces duplicate "policy applied" logs.
 - `transitionState(.running)` calls `reapplyCurrentPolicy()` only when `stateChanged == true` to avoid spurious re-applies (and duplicate log entries) when ngate emits "vpn online" multiple times during internal reconnects.
 - The default resolver is applied via `networksetup`, never via an `/etc/resolver/.` file (which cannot exist). Do not add file-based logic for the default resolver.
-- In `runWatchdogPass`, a missing `runtime[id]` for a still-known tunnel must `continue` (skip that tunnel), never `return` — returning would tear down the watchdog for ALL tunnels.
+- In `runWatchdogPass`, a missing tunnel in `tunnels` or `runtime` must `continue` (skip that tunnel), never `return` — returning would tear down the watchdog for ALL tunnels.
 - `runHelper` must keep its watchdog-terminate timeout; a hung helper otherwise wedges `policyApplyInProgress` permanently.
 - App version is sourced from the bundle / `build-app.sh APP_VERSION` only — never hardcode it in Swift.
+- `diag()` in `DNSApplier` maps `SystemLogLevel` to the corresponding OSLog level (`.info` / `.warning` / `.error`). Do not use a single hardcoded level.

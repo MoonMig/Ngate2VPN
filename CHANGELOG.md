@@ -5,6 +5,20 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 проект следует [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [3.10] — 2026-05-30
+
+### Удалено (мёртвый код)
+- `NoFocusRing` ViewModifier и `noFocusRing()` — no-op overlay; фокус-ринги реально подавляет `FocusRingFreeHostingView`.
+- `saveSecret` / `getSecret` / `deleteSecret` — однострочные обёртки над `KeychainSecretStore`; заменены прямыми вызовами.
+- Uppercase символы `A–Z` из `allowed` в `sanitizeDomain` — недостижимы после `lowercased()`.
+
+### Исправлено
+- **Force-unwrap `urls(for:in:).first!`** в `ProcessRunner.configsDirectory()` и `DNSApplier.installMarkerURL` — заменены безопасным паттерном с фоллбэком (как в `FileLogger.logsDirectory()`).
+- **`setupStatusBar`** — убраны мёртвый начальный icon `"network"` (немедленно перезаписывался), лишний `Task { @MainActor in }` и `force-unwrap statusItem!`.
+- **`quit()` в трей-меню** — убраны избыточные `persist()` и `shutdown()` перед `terminate(nil)`.
+- **`runConnectAllSequence`** — два `filter` на одном массиве заменены одним проходом.
+- **CLAUDE.md** обновлён: добавлены инварианты по персистентности настроек, обновлению трей-меню, очистке логов и фильтрации `[SYSTEM]` строк.
+
 ## [3.9] — 2026-05-30
 
 ### Исправлено

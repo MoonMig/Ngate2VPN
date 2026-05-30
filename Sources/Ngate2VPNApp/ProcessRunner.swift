@@ -86,7 +86,8 @@ struct TunnelConfigFile {
     }
 
     private static func configsDirectory() -> URL {
-        let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Caches")
         return cache
             .appendingPathComponent("Ngate2VPN", isDirectory: true)
             .appendingPathComponent("secure-configs", isDirectory: true)

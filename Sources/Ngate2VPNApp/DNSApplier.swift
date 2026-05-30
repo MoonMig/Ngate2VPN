@@ -91,7 +91,8 @@ final class DNSApplier: ObservableObject {
     /// to us so they can be cleaned up reliably across quits and crashes.
     private let installMarkerURL: URL = {
         let support = FileManager.default.urls(for: .applicationSupportDirectory,
-                                               in: .userDomainMask).first!
+                                               in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
         let dir = support.appendingPathComponent("Ngate2VPN", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("dns-helper-active.flag")
@@ -561,7 +562,7 @@ final class DNSApplier: ObservableObject {
     // MARK: - Sanitization
 
     private func sanitizeDomain(_ raw: String) -> String {
-        let allowed = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-")
+        let allowed = Set("abcdefghijklmnopqrstuvwxyz0123456789.-")
         return String(raw.lowercased().filter { allowed.contains($0) })
     }
 

@@ -51,23 +51,6 @@ private enum DS {
 }
 
 
-// MARK: - Focus ring suppressor (macOS 13 compatible)
-
-struct NoFocusRing: ViewModifier {
-    func body(content: Content) -> some View {
-        content.overlay(
-            RoundedRectangle(cornerRadius: 7)
-                .stroke(Color.clear, lineWidth: 0)
-        )
-    }
-}
-
-extension View {
-    func noFocusRing() -> some View {
-        modifier(NoFocusRing())
-    }
-}
-
 // MARK: - Tab
 
 enum AppTab: String, CaseIterable, Identifiable {
@@ -138,7 +121,6 @@ struct TitlebarTabView: View {
         }
         .fixedSize()
         .padding(.horizontal, 6)
-        .noFocusRing()
     }
 }
 
