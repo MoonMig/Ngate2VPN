@@ -40,8 +40,7 @@ enum NgateOutputParser {
             normalizedLine.contains("invalid credentials") ||
             normalizedLine.contains("authentication failed") ||
             normalizedLine.contains("access denied") ||
-            normalizedLine.contains("username/password combination has been tried") ||
-            normalizedLine.contains("password combination has been tried") {
+            normalizedLine.contains("username/password combination has been tried") {
             return .invalidCredentials
         }
         if normalizedLine.contains("no certificates acquired") ||

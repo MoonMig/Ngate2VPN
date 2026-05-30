@@ -197,12 +197,7 @@ final class TunnelProcess: @unchecked Sendable {
             // the difference between credentials being visible to
             // every process via `ps` and being readable only by the
             // current user via a 0600-mode temp file.
-            let configFile: TunnelConfigFile
-            do {
-                configFile = try TunnelConfigFile.create(for: configuration)
-            } catch {
-                throw error
-            }
+            let configFile = try TunnelConfigFile.create(for: configuration)
 
             let process = Process()
             let stdoutPipe = Pipe()

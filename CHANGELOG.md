@@ -5,6 +5,14 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 проект следует [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [3.5] — 2026-05-30
+
+### Удалено (мёртвый код)
+- Поля `lastExitCode`, `lastLogAt`, `lastOnlineAt` в `TunnelRuntimeState` — только записывались, нигде не читались.
+- Метод `appendBulkLog()` — нигде не вызывался.
+- Дублирующий паттерн `"password combination has been tried"` в `NgateOutputParser` — полностью покрывался предыдущим паттерном.
+- Trivial `do { try } catch { throw }` в `TunnelProcess.start()` — заменён на прямой `try`.
+
 ## [3.4] — 2026-05-30
 
 ### Исправлено

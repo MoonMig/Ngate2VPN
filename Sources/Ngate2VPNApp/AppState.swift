@@ -100,10 +100,7 @@ enum TunnelError: String, Codable {
 struct TunnelRuntimeState {
     var status: TunnelState = .stopped
     var logLines: [String] = []
-    var lastExitCode: Int32?
     var launchedAt: Date?
-    var lastLogAt: Date?
-    var lastOnlineAt: Date?
     var lastStateChange: Date?
     var errorMessage: String?
     var lastError: TunnelError?
@@ -301,8 +298,6 @@ final class AppState: ObservableObject {
         disconnectRequested.remove(id)
         runtime[id]?.hasEstablishedConnection = false
         runtime[id]?.isNgateReconnecting = false
-        runtime[id]?.lastLogAt = nil
-        runtime[id]?.lastOnlineAt = nil
         runtime[id]?.lastError = nil
         runtime[id]?.clientAddress = nil
         transitionState(id: id, newState: .starting)
@@ -553,8 +548,6 @@ final class AppState: ObservableObject {
     
     private func handleExit(_ id: UUID, code: Int32) {
         guard deletingTunnelIDs.contains(id) == false else { return }
-        runtime[id]?.lastExitCode = code
-
         if disconnectRequested.remove(id) != nil {
             appendSystemLog("Stopped", to: id)
             transitionState(id: id, newState: .stopped)
@@ -757,7 +750,6 @@ final class AppState: ObservableObject {
 
             r.logLines.append(formattedLine)
             Self.trimLogBuffer(&r.logLines, target: maxLogLinesPerTunnel, slack: logTrimSlack)
-            r.lastLogAt = now
             runtime[id] = r
             logger(for: id).append(line: diskLine)
 
@@ -769,7 +761,6 @@ final class AppState: ObservableObject {
             if normalized.contains("vpn online") {
                 runtime[id]?.hasEstablishedConnection = true
                 runtime[id]?.isNgateReconnecting = false
-                runtime[id]?.lastOnlineAt = now
                 // Successful connection — reset auto-restart accounting.
                 // If the tunnel later drops with a retryable error, the
                 // watchdog starts the backoff sequence over from the base
@@ -1209,10 +1200,6 @@ final class AppState: ObservableObject {
 
     private func pinAccount(for tunnelID: UUID) -> String {
         "\(tunnelID.uuidString)_pin"
-    }
-
-    private func appendBulkLog(_ message: String) {
-        tunnels.forEach { appendLog(message, to: $0.id) }
     }
 
     private func logger(for tunnelID: UUID) -> FileLogger {
