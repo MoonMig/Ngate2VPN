@@ -316,11 +316,15 @@ final class DNSApplier: ObservableObject {
         policySubscription?.cancel()
         policySubscription = nil
 
-        // Build an UNINSTALL_SELF line carrying every domain we previously
-        // wrote, so the helper removes them. The helper handles default-
-        // resolver and cache flush unconditionally.
+        // If default DNS was overridden via networksetup, restore it first.
+        // Then send UNINSTALL_SELF to remove per-domain resolver files,
+        // drop the sudoers rule, and self-delete the helper script.
+        var stdin = ""
+        if defaultInstalled {
+            stdin += "REMOVE_DEFAULT\n"
+        }
         let domainArgs = writtenDomains.sorted().joined(separator: " ")
-        let stdin = "UNINSTALL_SELF \(domainArgs)\n"
+        stdin += "UNINSTALL_SELF \(domainArgs)\n"
 
         do {
             try await runHelper(stdin: stdin)
@@ -451,10 +455,13 @@ final class DNSApplier: ObservableObject {
             // on wake-from-sleep, network interface changes, or system updates —
             // while our writtenScopedResolvers still thinks they exist. Skip the
             // re-apply only when the files are actually present on disk.
+            // Per-domain resolver files may have been removed externally (sleep/wake,
+            // system update). Only skip re-apply when the files are actually on disk.
+            // Note: the default resolver is networksetup-based, not a file — we trust
+            // writtenDefaultResolver as ground truth for that case.
             let filesIntact = newScopedResolvers.keys.allSatisfy {
                 FileManager.default.fileExists(atPath: "/etc/resolver/\($0)")
-            } && (writtenDefaultResolver == nil ||
-                  FileManager.default.fileExists(atPath: "/etc/resolver/."))
+            }
             if filesIntact { return }
         }
 
@@ -624,7 +631,14 @@ final class DNSApplier: ObservableObject {
             try process.run()
             try? stdinPipe.fileHandleForWriting.write(contentsOf: Data(stdin.utf8))
             try? stdinPipe.fileHandleForWriting.close()
+
+            // 10-second watchdog: if the helper hangs (e.g. mDNSResponder
+            // doesn't respond to SIGHUP), terminate the process so we don't
+            // block policyApplyInProgress forever.
+            let watchdog = DispatchWorkItem { process.terminate() }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 10, execute: watchdog)
             process.waitUntilExit()
+            watchdog.cancel()
 
             if process.terminationStatus != 0 {
                 let raw = (try? stderrPipe.fileHandleForReading.readToEnd()) ?? Data()
@@ -744,21 +758,27 @@ while IFS= read -r line; do
             rm -f "/etc/resolver/${domain}"
             ;;
         WRITE_DEFAULT)
-            tmp="/etc/resolver/..tmp"
-            : > "$tmp"
+            # macOS resolver(5): the "default" DNS client is the system primary
+            # (resolv.conf / Network prefs), not a file in /etc/resolver/.
+            # A file named "." cannot be created on HFS+/APFS — the kernel always
+            # resolves "." to the directory. Override the default resolver by
+            # setting DNS servers on every active network service instead.
             for ip in "${tok[@]:1}"; do
-                valid_ip "$ip" || { echo "invalid ip: $ip" >&2; rm -f "$tmp"; exit 15; }
-                printf 'nameserver %s\n' "$ip" >> "$tmp"
+                valid_ip "$ip" || { echo "invalid ip: $ip" >&2; exit 15; }
             done
-            if [[ -s "$tmp" ]]; then
-                chmod 644 "$tmp"
-                mv -f "$tmp" "/etc/resolver/."
-            else
-                rm -f "$tmp"
-            fi
+            while IFS= read -r service; do
+                [[ -z "$service" ]] && continue
+                [[ "$service" == \** ]] && continue   # disabled service
+                /usr/sbin/networksetup -setdnsservers "$service" "${tok[@]:1}" 2>/dev/null || true
+            done < <(/usr/sbin/networksetup -listallnetworkservices 2>/dev/null | /usr/bin/tail -n +2)
             ;;
         REMOVE_DEFAULT)
-            rm -f "/etc/resolver/."
+            # Restore DHCP-assigned DNS on every active network service.
+            while IFS= read -r service; do
+                [[ -z "$service" ]] && continue
+                [[ "$service" == \** ]] && continue
+                /usr/sbin/networksetup -setdnsservers "$service" "Empty" 2>/dev/null || true
+            done < <(/usr/sbin/networksetup -listallnetworkservices 2>/dev/null | /usr/bin/tail -n +2)
             ;;
         FLUSH)
             flush_dns
@@ -768,7 +788,6 @@ while IFS= read -r line; do
                 valid_domain "$d" || continue
                 rm -f "/etc/resolver/$d"
             done
-            rm -f "/etc/resolver/."
             flush_dns
             # Drop privilege rule first — once gone we can't re-enter as root.
             rm -f /etc/sudoers.d/ngate2vpn

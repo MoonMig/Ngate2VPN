@@ -338,8 +338,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // (`orderFrontStandardAboutPanel:`). So no recursion, and the
         // options dictionary is the one that actually drives version
         // text and credits.
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         NSApp.orderFrontStandardAboutPanel(options: [
-            .applicationVersion:                                "3.1",
+            .applicationVersion:                                version,
             NSApplication.AboutPanelOptionKey(rawValue: "Version"): "",
             .credits:                                            credits
         ])
@@ -460,8 +461,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         
         if let button = statusItem?.button {
             button.image = NSImage(systemSymbolName: "network", accessibilityDescription: "Ngate VPN")
-            button.action = #selector(statusBarButtonClicked)
-            button.target = self
         }
         
         // Initialise the tray icon manager.
@@ -537,10 +536,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Native NSAlert dismisses itself on user action — nothing to do here.
         // Kept as a no-op so the existing observer in setupAlertObserver
         // can call it without triggering an Optional-unwrap crash.
-    }
-    
-    @objc private func statusBarButtonClicked() {
-        statusItem?.button?.performClick(nil)
     }
     
     private func startObserving() {

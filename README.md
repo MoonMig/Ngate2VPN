@@ -4,7 +4,7 @@
 Написан на SwiftUI, с дизайном в духе Shadowrocket и нативной эстетикой
 macOS.
 
-> **Статус:** v3.1 — production-ready
+> **Статус:** v3.3 — production-ready
 
 ---
 

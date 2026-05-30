@@ -131,18 +131,12 @@ struct TunnelSnapshot {
     let runtime: TunnelRuntimeState
 }
 
-enum ConnectAllFailurePolicy {
-    case stopSequence
-    case continueSequence
-}
-
 @MainActor
 final class AppState: ObservableObject {
     @Published var tunnels: [TunnelConfiguration]
     @Published private(set) var runtime: [UUID: TunnelRuntimeState]
     @Published private(set) var systemLogLines: [String] = []
     @Published var binaryPath: String
-    @Published var autoScrollLogs = true
     @Published var hideDockOnClose = false
     @Published var selectedTab: AppTab = .home
 
@@ -171,7 +165,6 @@ final class AppState: ObservableObject {
     /// line, dropped when the tunnel disconnects.
     private var dnsParsers: [UUID: NgateGatewayResponseParser] = [:]
     @Published var selectedTunnelID: UUID?
-    @Published var selectedLogTunnelID: UUID?
     @Published var alertTitle: String?
     @Published var alertMessage: String?
     @Published var isAlertPresented: Bool = false
@@ -248,8 +241,7 @@ final class AppState: ObservableObject {
     /// trims rarer (cheaper amortised cost) at the price of a slightly
     /// fuzzier in-memory cap.
     private let logTrimSlack: Int = 1_000
-    var connectAllFailurePolicy: ConnectAllFailurePolicy = .continueSequence
-    
+
     init() {
         self.binaryPath = "/opt/cprongate/ngateconsoleclient"
         self.runtime = [:]
@@ -262,7 +254,6 @@ final class AppState: ObservableObject {
         }
         for t in tunnels { runtime[t.id] = TunnelRuntimeState() }
         selectedTunnelID = tunnels.first?.id
-        selectedLogTunnelID = tunnels.first?.id
         
         $hideDockOnClose
             .sink { [weak self] _ in self?.persist() }
@@ -397,7 +388,7 @@ final class AppState: ObservableObject {
         let shouldStartWatchdog = tunnels.isEmpty
         let t = TunnelConfiguration(title: "Profile \(tunnels.count + 1)")
         tunnels.append(t); runtime[t.id] = TunnelRuntimeState()
-        selectedTunnelID = t.id; selectedLogTunnelID = t.id; persist()
+        selectedTunnelID = t.id; persist()
         if shouldStartWatchdog {
             startWatchdog()
         }
@@ -1029,9 +1020,9 @@ final class AppState: ObservableObject {
             }
             guard deletingTunnelIDs.contains(tunnelID) == false else { continue }
             guard let runtimeState = runtime[tunnelID] else {
-                watchdogTask?.cancel()
-                watchdogTask = nil
-                return
+                // runtime entry missing for a known tunnel — transient inconsistency
+                // during deletion; skip this tunnel, keep watching the others.
+                continue
             }
             let processState = processManager.state(for: tunnelID)
 
@@ -1280,7 +1271,6 @@ final class AppState: ObservableObject {
         runtime.removeValue(forKey: id)
         tunnels.removeAll { $0.id == id }
         if selectedTunnelID == id { selectedTunnelID = tunnels.first?.id }
-        if selectedLogTunnelID == id { selectedLogTunnelID = selectedTunnelID ?? tunnels.first?.id }
         persist()
         deleteStoredSecrets(for: id)
         disconnectRequested.remove(id)

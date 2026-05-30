@@ -259,8 +259,8 @@ struct HomeView: View {
                         .listRowBackground(DS.bg)
                         .listRowSeparator(.visible)
                         .listRowSeparatorTint(DS.border)
-                        .alignmentGuide(.listRowSeparatorLeading)  { _ in 18 }
-                        .alignmentGuide(.listRowSeparatorTrailing) { d in d.width - 18 }
+                        .alignmentGuide(.listRowSeparatorLeading)  { _ in 9 }
+                        .alignmentGuide(.listRowSeparatorTrailing) { d in d.width - 9 }
                     }
                     .onMove { source, destination in
                         appState.tunnels.move(fromOffsets: source, toOffset: destination)
@@ -375,9 +375,12 @@ struct ProfileRow: View {
                     appState.toggleConnection(for: tunnelID)
                 }
             }
-            .padding(.horizontal, 18)
+            .padding(.horizontal, 9)
             .padding(.vertical, 11)
-            .background(hovered ? DS.surfaceHi.opacity(0.6) : Color.clear)
+            .background(
+                RoundedRectangle(cornerRadius: DS.r)
+                    .fill(hovered ? DS.surfaceHi.opacity(0.6) : Color.clear)
+            )
             .animation(.easeOut(duration: 0.1), value: hovered)
             .onHover { hovered = $0 }
             .onTapGesture { onEdit() }

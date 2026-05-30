@@ -5,6 +5,54 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 проект следует [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [3.3] — 2026-05-30
+
+### Улучшено
+- Область hover-подсветки строки профиля на вкладке «Главная» расширена до полной ширины контейнера.
+
+## [3.2] — 2026-05-30
+
+### Исправлено
+- **`WRITE_DEFAULT` никогда не создавал рабочий файл default-резолвера.**
+  Прежняя реализация пыталась создать файл через `mv tmp /etc/resolver/.`,
+  но на HFS+/APFS ядро всегда резолвит `.` в саму директорию — в результате
+  создавался файл `..tmp`, который `mDNSResponder` игнорировал. `REMOVE_DEFAULT`
+  (`rm -f "/etc/resolver/."`) также был no-op. Согласно man resolver(5), default
+  DNS — это `resolv.conf` / primary DNS configuration системы; `/etc/resolver/`
+  предназначен только для per-domain роутинга. Реализация переписана:
+  `WRITE_DEFAULT` теперь вызывает `networksetup -setdnsservers` на всех активных
+  сетевых сервисах, `REMOVE_DEFAULT` восстанавливает DHCP DNS через
+  `networksetup -setdnsservers "Empty"`.
+- **`UNINSTALL_SELF` не восстанавливал DNS при деинсталляции.**
+  При удалении DNS Helper вызов `rm -f "/etc/resolver/."` был no-op и DNS
+  через `networksetup` не восстанавливался. Теперь при деинсталляции перед
+  `UNINSTALL_SELF` автоматически отправляется `REMOVE_DEFAULT` если `defaultInstalled`.
+- **Проверка `fileExists("/etc/resolver/.")` всегда возвращала `true`.**
+  В `apply()` проверка существования default-resolver файла использовала путь
+  `/etc/resolver/.`, который является директорией, а не файлом. Убрана из
+  условия досрочного возврата.
+- **Мёртвый код удалён из `AppState` и `StatusIconManager`.**
+  Удалены: `enum ConnectAllFailurePolicy` и `connectAllFailurePolicy` (нигде
+  не читались), `@Published var autoScrollLogs` (auto-scroll работал независимо
+  через `wasNearBottom`), `@Published var selectedLogTunnelID` (JournalView
+  использовал собственный локальный state), метод `toggleWindow()` в
+  `StatusIconManager` (постил уведомление без единого подписчика),
+  `statusBarButtonClicked()` в AppDelegate (status item с меню никогда
+  не вызывал action).
+- **Вотчдог останавливался целиком при отсутствии runtime-записи одного туннеля.**
+  `runWatchdogPass` при `runtime[tunnelID] == nil` вызывал `watchdogTask?.cancel()`
+  и `return`, прерывая мониторинг всех туннелей. Исправлено на `continue`.
+- **`runHelper` мог заблокировать DNS-политику навсегда.**
+  `Process.waitUntilExit()` без таймаута позволял зависшему helper-скрипту
+  держать `policyApplyInProgress = true` бесконечно. Добавлен 10-секундный
+  watchdog через `DispatchWorkItem`.
+- **Версия в панели «О программе» была захардкожена отдельно от `build-app.sh`.**
+  Теперь читается из `Bundle.main.infoDictionary["CFBundleShortVersionString"]`
+  — единственный источник правды.
+- **Иконка трея невидима на светлом menu bar при отключённых туннелях.**
+  `NSColor.white` заменён на `NSColor.secondaryLabelColor` — адаптируется к
+  теме оформления.
+
 ## [3.1] — 2026-05-30
 
 ### Исправлено
