@@ -661,17 +661,21 @@ final class AppState: ObservableObject {
 
         for piece in pieces {
             let extracted = parser.feed(piece)
-            for entry in extracted {
-                // Spec: tunnels with no DNSs are silently ignored. We pass
-                // them through anyway and let DNSPolicyController drop them
-                // via TunnelDNSConfig.isValid — that keeps the rule in one
-                // place.
-                dnsPolicy.upsert(
-                    tunnelID: tunnelID,
-                    dnsServers: entry.dnsServers,
-                    matchDomains: entry.searchDomains
-                )
-            }
+            guard !extracted.isEmpty else { continue }
+
+            // Gateway can return multiple IPTunnel entries in one JSON block.
+            // Calling upsert() per-entry would overwrite the previous call for
+            // the same tunnelID: if the last entry has empty SearchDomains the
+            // split-DNS domains collected from earlier entries are lost, and if
+            // it has empty DNSs the whole config is silently removed via
+            // TunnelDNSConfig.isValid. Aggregate all entries into one upsert.
+            let allServers = Array(Set(extracted.flatMap { $0.dnsServers }))
+            let allDomains = Array(Set(extracted.flatMap { $0.searchDomains }))
+            dnsPolicy.upsert(
+                tunnelID: tunnelID,
+                dnsServers: allServers,
+                matchDomains: allDomains
+            )
         }
     }
 

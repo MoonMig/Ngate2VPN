@@ -169,3 +169,4 @@ The tray menu is rebuilt **only** in `menuWillOpen(_:)` (i.e. just before the us
 - `runHelper` must keep its watchdog-terminate timeout; a hung helper otherwise wedges `policyApplyInProgress` permanently.
 - App version is sourced from the bundle / `build-app.sh APP_VERSION` only — never hardcode it in Swift.
 - `diag()` in `DNSApplier` maps `SystemLogLevel` to the corresponding OSLog level (`.info` / `.warning` / `.error`). Do not use a single hardcoded level.
+- `feedDNSParser` must aggregate ALL `ExtractedTunnel` entries from one JSON parse into **a single** `dnsPolicy.upsert()` call. Multiple calls for the same `tunnelID` overwrite each other — if the last entry has empty `SearchDomains` or empty `DNSs`, domains collected from earlier entries are silently lost. Use `flatMap` to merge all entries before calling `upsert()`.
