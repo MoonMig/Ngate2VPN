@@ -221,7 +221,7 @@ actor LogWriterActor {
             ?? URL(fileURLWithPath: NSHomeDirectory())
                 .appendingPathComponent("Library/Application Support")
         return appSupport
-            .appendingPathComponent("NgateVPN", isDirectory: true)
+            .appendingPathComponent("Ngate2VPN", isDirectory: true)
             .appendingPathComponent("logs",    isDirectory: true)
     }
 

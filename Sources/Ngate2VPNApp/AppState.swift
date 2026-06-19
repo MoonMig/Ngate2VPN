@@ -660,7 +660,22 @@ final class AppState: ObservableObject {
         }
 
         for piece in pieces {
+            let wasCapturing = parser.capturing
             let extracted = parser.feed(piece)
+            let isCapturing = parser.capturing
+
+            // Diagnostic: log the moment the JSON block is first detected.
+            if !wasCapturing && isCapturing {
+                appendSystemLog("DNS: JSON block detected, reading…", to: tunnelID)
+            }
+
+            // Diagnostic: parse was triggered (capturing ended) but produced nothing.
+            if wasCapturing && !isCapturing && extracted.isEmpty {
+                let reason = parser.parseFailureReason
+                let suffix = reason.isEmpty ? "" : " — \(reason)"
+                appendSystemLog("DNS: JSON block parsed but no tunnel data found\(suffix)", to: tunnelID, level: .warning)
+            }
+
             guard !extracted.isEmpty else { continue }
 
             // Gateway can return multiple IPTunnel entries in one JSON block.
@@ -671,6 +686,15 @@ final class AppState: ObservableObject {
             // TunnelDNSConfig.isValid. Aggregate all entries into one upsert.
             let allServers = Array(Set(extracted.flatMap { $0.dnsServers }))
             let allDomains = Array(Set(extracted.flatMap { $0.searchDomains }))
+
+            let srvStr = allServers.isEmpty ? "none" : allServers.joined(separator: ", ")
+            let domStr = allDomains.isEmpty ? "none" : allDomains.joined(separator: ", ")
+            appendSystemLog("DNS parsed from gateway — servers: \(srvStr); domains: \(domStr)", to: tunnelID)
+
+            if allServers.isEmpty {
+                appendSystemLog("DNS: no DNS servers in gateway response — split-DNS requires nameserver addresses; check gateway configuration", to: tunnelID, level: .warning)
+            }
+
             dnsPolicy.upsert(
                 tunnelID: tunnelID,
                 dnsServers: allServers,
@@ -727,7 +751,12 @@ final class AppState: ObservableObject {
         // contain the gateway's JSON response with "IPTunnels" / "DNSs" /
         // "SearchDomains" produce extracted configs which we hand to the
         // policy controller.
-        feedDNSParser(pieces: pieces, tunnelID: id)
+        // Guard: appendSystemLog also calls appendLog (to write [SYSTEM] entries
+        // to the same journal). Without this guard those lines would re-enter
+        // feedDNSParser while capturing==true and corrupt the JSON buffer.
+        if !line.contains("[SYSTEM]") {
+            feedDNSParser(pieces: pieces, tunnelID: id)
+        }
 
         for piece in pieces {
             let t = piece.trimmingCharacters(in: .whitespaces)

@@ -233,48 +233,75 @@ final class NgateGatewayResponseParser {
     private var depth: Int = 0
 
     /// True while we're inside a JSON block.
-    private var capturing: Bool = false
+    var capturing: Bool = false
 
-    /// Strips the log prefix from a single line. Returns nil for lines we
-    /// don't recognize as Debug output (e.g. Info/Warning lines).
+    /// Set by parse() when JSON decoding fails; cleared on success.
+    /// feedDNSParser reads this to emit a diagnostic with the buffer sample.
+    var parseFailureReason: String = ""
+
+    /// Strips the log prefix from a single line.
+    /// Returns nil when no recognised log-level keyword is found.
     private func strip(_ raw: String) -> String? {
         // Format: "[HH:MM:SS] Mon DD HH:MM:SS.mmm Level<spaces>payload"
-        // We don't care about the prefix details — split off the level word
-        // ("Debug", "Info", etc.) and take everything after the trailing
-        // whitespace. If "Debug" isn't present, this isn't a payload line.
-        guard let levelRange = raw.range(of: " Debug") ?? raw.range(of: "\tDebug") else {
-            return nil
+        // Accept all standard ngate log levels, case-insensitively.
+        // After the keyword, require whitespace (space or tab) so we don't
+        // match the word inside payload text like "…some information…".
+        let opts: String.CompareOptions = .caseInsensitive
+        let keywords = [" Debug", "\tDebug", " Info", "\tInfo",
+                        " Warning", "\tWarning", " Error", "\tError"]
+        for keyword in keywords {
+            guard let range = raw.range(of: keyword, options: opts) else { continue }
+            let next = range.upperBound
+            guard next == raw.endIndex || raw[next] == " " || raw[next] == "\t" else { continue }
+            let after = raw[next...]
+            return String(String(after).drop(while: { $0 == " " || $0 == "\t" }))
         }
-        let after = raw[levelRange.upperBound...]
-        // Drop leading spaces/tabs that ngate uses for indentation
-        return String(String(after).drop(while: { $0 == " " || $0 == "\t" }))
+        // Some ngateconsoleclient versions output "Debug     payload" with the
+        // level word at column 0 — no preceding timestamp at all.  The loop
+        // above only finds " Debug" (space-prefixed), so we need an anchored
+        // check here.  Without it, strip() returns nil; the fallback (?? line)
+        // keeps the "Debug " prefix in the buffer, which corrupts the JSON and
+        // causes JSONSerialization to fail silently.
+        let anchoredKeywords = ["debug", "info", "warning", "error"]
+        let lower = raw.lowercased()
+        for kw in anchoredKeywords {
+            guard lower.hasPrefix(kw) else { continue }
+            let next = raw.index(raw.startIndex, offsetBy: kw.count)
+            guard next == raw.endIndex || raw[next] == " " || raw[next] == "\t" else { continue }
+            return String(String(raw[next...]).drop(while: { $0 == " " || $0 == "\t" }))
+        }
+        return nil
     }
 
     /// Feed one log line. When this method returns a non-empty array,
     /// a complete response was found and parsed; otherwise more lines are
     /// needed (or the line is ignored).
     func feed(_ line: String) -> [ExtractedTunnel] {
-        guard let payload = strip(line) else { return [] }
+        // Fall back to the raw line when no log-level prefix is recognised.
+        // Some ngateconsoleclient versions output the JSON block as plain text
+        // (no "Debug"/"Info"/… prefix), making strip() return nil for every
+        // JSON line. Without the fallback the block would be silently skipped.
+        let payload = strip(line) ?? line
 
-        // Detect start of JSON object
+        // Detect start of JSON object.
+        // Some gateway versions log the JSON after a descriptive prefix on the
+        // same Debug line (e.g. "Response: {…}"). Accept '{' anywhere in the
+        // payload, not just at position 0. Brace tracking starts from '{',
+        // so any text before it is ignored and cannot skew the depth counter.
+        var effectivePayload = payload
         if !capturing {
-            if payload.first == "{" {
-                capturing = true
-                buffer = ""
-                depth = 0
-            } else {
-                return []
-            }
+            guard let braceIndex = payload.firstIndex(of: "{") else { return [] }
+            capturing = true
+            buffer = ""
+            depth = 0
+            effectivePayload = String(payload[braceIndex...])
         }
 
         // Track brace depth across the line — strings might contain `{`/`}`
         // but ngate's response is well-formed JSON so simple counting works.
-        // Cookie strings ("nginxauth=*** hidden cookie ***") are sanitized
-        // before they get here (we only see them in Debug HTTP body, not in
-        // the JSON object that starts with {).
         var inString = false
         var escape = false
-        for char in payload {
+        for char in effectivePayload {
             if escape { escape = false; continue }
             if char == "\\" { escape = true; continue }
             if char == "\"" { inString.toggle() }
@@ -283,7 +310,7 @@ final class NgateGatewayResponseParser {
             if char == "}" { depth -= 1 }
         }
 
-        buffer.append(payload)
+        buffer.append(effectivePayload)
         buffer.append("\n")
 
         if depth <= 0 && capturing {
@@ -304,24 +331,45 @@ final class NgateGatewayResponseParser {
         capturing = false
     }
 
-    /// Decodes a complete JSON blob. Tolerates missing fields — emits one
-    /// `ExtractedTunnel` per IPTunnels[] entry that has a usable DNSs list.
+    /// Decodes a complete JSON blob. Searches the entire object tree
+    /// recursively for "DNSs" and "SearchDomains" keys so the parser
+    /// works regardless of the nesting level the gateway uses — some
+    /// gateways embed DNS inside IPTunnels[] entries, others hoist it
+    /// to the top level or use a different outer key.
     private func parse(_ json: String) -> [ExtractedTunnel] {
-        guard let data = json.data(using: .utf8) else { return [] }
-        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        parseFailureReason = ""
+        guard let data = json.data(using: .utf8) else {
+            parseFailureReason = "UTF-8 encode failed"
             return []
         }
-        guard let tunnels = obj["IPTunnels"] as? [[String: Any]] else { return [] }
+        guard let root = try? JSONSerialization.jsonObject(with: data) else {
+            parseFailureReason = "JSONSerialization failed (buffer \(json.count) bytes)"
+            return []
+        }
 
-        return tunnels.compactMap { tunnel in
-            // DNSs may be missing or empty — caller filters those out
-            // through TunnelDNSConfig.isValid.
-            let servers = (tunnel["DNSs"] as? [String]) ?? []
-            let domains = (tunnel["SearchDomains"] as? [String]) ?? []
-            // Drop tunnels that contributed neither resolvers nor zones —
-            // there's no useful info in them.
-            guard !servers.isEmpty || !domains.isEmpty else { return nil }
-            return ExtractedTunnel(dnsServers: servers, searchDomains: domains)
+        var servers: [String] = []
+        var domains: [String] = []
+        collectDNS(from: root, servers: &servers, domains: &domains)
+
+        guard !servers.isEmpty || !domains.isEmpty else {
+            parseFailureReason = "JSON valid but DNSs/SearchDomains not found (buffer \(json.count) bytes)"
+            return []
+        }
+        return [ExtractedTunnel(
+            dnsServers: Array(Set(servers)),
+            searchDomains: Array(Set(domains))
+        )]
+    }
+
+    /// Walks the JSON tree and collects all string arrays named "DNSs"
+    /// and "SearchDomains", regardless of nesting depth.
+    private func collectDNS(from value: Any, servers: inout [String], domains: inout [String]) {
+        if let dict = value as? [String: Any] {
+            if let s = dict["DNSs"] as? [String]          { servers.append(contentsOf: s) }
+            if let d = dict["SearchDomains"] as? [String] { domains.append(contentsOf: d) }
+            for v in dict.values { collectDNS(from: v, servers: &servers, domains: &domains) }
+        } else if let array = value as? [Any] {
+            for item in array { collectDNS(from: item, servers: &servers, domains: &domains) }
         }
     }
 }

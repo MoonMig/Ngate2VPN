@@ -360,7 +360,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         пароля при каждом подключении / отключении туннеля.
 
         Логи на диске
-        ~/Library/Application Support/NgateVPN/logs/
+        ~/Library/Application Support/Ngate2VPN/logs/
 
         Безопасность
         Учётные данные хранятся только в Keychain macOS и в \
