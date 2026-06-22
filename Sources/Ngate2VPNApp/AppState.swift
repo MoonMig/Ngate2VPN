@@ -566,6 +566,14 @@ final class AppState: ObservableObject {
             return
         }
 
+        // The ngate process is gone — there is no longer anything to reconnect.
+        // isNgateReconnecting is set to true when ngate logs a retryable error
+        // and starts its own internal reconnect loop. If the process then exits
+        // before reaching "vpn online", the flag is left true. Without this
+        // clear the watchdog guard (isNgateReconnecting == false) blocks every
+        // subsequent restart attempt, making auto-reconnect effectively dead.
+        runtime[id]?.isNgateReconnecting = false
+
         let exitError = runtime[id]?.lastError ?? .processExited
         let errorMsg = exitError == .processExited ? "Connection failed with exit code: \(code)" : exitError.message
         appendSystemLog(errorMsg, to: id, level: .error)

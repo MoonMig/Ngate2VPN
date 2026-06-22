@@ -5,6 +5,12 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 проект следует [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [3.20] — 2026-06-22
+
+### Исправлено
+- **Auto-reconnect не работал после обрыва сети — переподключение не происходило.**
+  Когда ngate логирует retryable-ошибку (`connectionRefused`, `sessionRefreshFailed` и т.п.) во время активного соединения, флаг `isNgateReconnecting` выставляется в `true` — это сигнал watchdog'у не вмешиваться, пока ngate сам пытается восстановить сессию. Проблема: если процесс ngate завершался до того, как успевал вывести `"vpn online"`, флаг оставался `true`, а `transitionState(.failed)` его не сбрасывал (сброс был только для `.stopped`). На каждом тике watchdog видел `isNgateReconnecting == true` и пропускал туннель навсегда. Исправлено: `handleExit` сбрасывает флаг перед переходом в `.failed` — процесса больше нет, некому reconnecting делать.
+
 ## [3.19] — 2026-06-22
 
 ### Добавлено
