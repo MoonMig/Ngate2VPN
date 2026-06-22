@@ -269,6 +269,7 @@ final class AppState: ObservableObject {
         startWatchdog()
         migratePersistedSecretsToKeychainIfNeeded()
         persist()
+        observeSystemWake()
 
         Task.detached(priority: .background) {
             await LogWriterActor.deleteOldLogs(olderThanDays: 30)
@@ -1017,6 +1018,36 @@ final class AppState: ObservableObject {
         activeStartupTunnelIDs.removeAll()
     }
 
+    private func observeSystemWake() {
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.handleSystemWake()
+            }
+        }
+    }
+
+    @MainActor
+    private func handleSystemWake() {
+        // After sleep/wake, ngate processes may have exited or be stuck in
+        // an internal retry loop that won't succeed (gateway may have dropped
+        // the session). Clear stale isNgateReconnecting flags for any tunnel
+        // whose process is already gone, then run an immediate watchdog pass
+        // rather than waiting up to watchdogInterval seconds for the timer.
+        for tunnel in tunnels {
+            if processManager.state(for: tunnel.id) == nil {
+                runtime[tunnel.id]?.isNgateReconnecting = false
+            }
+        }
+        appendBulkSystemLog("System woke from sleep — running watchdog pass")
+        Task { [weak self] in
+            await self?.runWatchdogPass()
+        }
+    }
+
     private func startWatchdog() {
         watchdogTask?.cancel()
         guard tunnels.isEmpty == false else {
@@ -1060,7 +1091,16 @@ final class AppState: ObservableObject {
             }
 
             if processState == nil {
-                await restartIfNeededAfterProcessExit(for: tunnelID, runtimeState: runtimeState, now: now)
+                // Process is gone. isNgateReconnecting may still be true if
+                // the process exited before handleExit had a chance to run
+                // (race: both are @MainActor tasks queued from different threads).
+                // A dead process cannot be reconnecting — clear the flag here so
+                // restartIfNeededAfterProcessExit always sees a consistent state.
+                if runtime[tunnelID]?.isNgateReconnecting == true {
+                    runtime[tunnelID]?.isNgateReconnecting = false
+                }
+                guard let freshState = runtime[tunnelID] else { continue }
+                await restartIfNeededAfterProcessExit(for: tunnelID, runtimeState: freshState, now: now)
                 continue
             }
         }
@@ -1069,7 +1109,10 @@ final class AppState: ObservableObject {
     private func restartIfNeededAfterProcessExit(for id: UUID, runtimeState: TunnelRuntimeState, now: Date) async {
         guard deletingTunnelIDs.contains(id) == false else { return }
         guard disconnectRequested.contains(id) == false else { return }
-        guard runtimeState.isNgateReconnecting == false else { return }
+        // isNgateReconnecting is NOT checked here: this function is only ever
+        // called when processState == nil (process confirmed dead), and a dead
+        // process cannot be reconnecting. runWatchdogPass clears the flag before
+        // calling us precisely to avoid a stale-flag false-negative.
         guard activeStartupTunnelIDs.contains(id) == false else { return }
         guard watchdogRestartingTunnels.contains(id) == false else { return }
 

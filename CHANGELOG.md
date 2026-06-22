@@ -5,6 +5,14 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 проект следует [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [3.21] — 2026-06-22
+
+### Исправлено
+- **Auto-reconnect не срабатывал после выхода из сна.**
+  После sleep/wake watchdog может выполниться раньше, чем завершится асинхронный `handleExit` (оба работают на `@MainActor`, но `handleExit` диспатчится как `Task`). В этот момент watchdog видел `isNgateReconnecting == true` (флаг ещё не сброшен), а процесса уже нет — и пропускал туннель без попытки переподключения. Двойное исправление:
+  1. `runWatchdogPass` теперь явно сбрасывает `isNgateReconnecting = false` при `processState == nil` — независимо от того, успел ли `handleExit` это сделать раньше.
+  2. Новый обработчик `NSWorkspace.didWakeNotification`: при выходе из сна немедленно сбрасывает `isNgateReconnecting` для всех туннелей с мёртвым процессом и запускает внеплановый проход watchdog (не ждёт следующего тика через 5 с).
+
 ## [3.20] — 2026-06-22
 
 ### Исправлено
