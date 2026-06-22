@@ -436,6 +436,7 @@ struct EditSheet: View {
             || draft.username != saved.username
             || !draft.pinCode.isEmpty
             || !draft.password.isEmpty
+            || draft.autoReconnect != saved.autoReconnect
     }
 
     var body: some View {
@@ -463,6 +464,9 @@ struct EditSheet: View {
                     FormBlock("Profile") {
                         FieldRow(label: "Name")  { TextField("Profile name", text: $draft.title).plain() }
                         FieldRow(label: "URL")   { TextField("https://…",    text: $draft.endpointURL).plain() }
+                    }
+                    FormBlock("Connection") {
+                        ToggleRow(label: "Auto-reconnect", icon: "arrow.clockwise", value: $draft.autoReconnect)
                     }
                     FormBlock("Auth") {
                         FieldRow(label: "Method") {

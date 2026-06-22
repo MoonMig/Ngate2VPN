@@ -19,10 +19,16 @@ struct TunnelConfiguration: Codable, Identifiable, Equatable {
     let id: UUID
     var title, endpointURL, serialNumber, pinCode, username, password: String
     var authMethod: TunnelAuthMethod
-    init(id: UUID = UUID(), title: String, endpointURL: String = "", authMethod: TunnelAuthMethod = .certificate, serialNumber: String = "", pinCode: String = "", username: String = "", password: String = "") {
+    /// When true, the watchdog will reconnect this tunnel automatically after
+    /// any unexpected disconnect (network drop, process crash), regardless of
+    /// how many consecutive failures occur. Manual disconnects (via the UI)
+    /// are never retried — they always leave the tunnel in .stopped.
+    var autoReconnect: Bool = false
+    init(id: UUID = UUID(), title: String, endpointURL: String = "", authMethod: TunnelAuthMethod = .certificate, serialNumber: String = "", pinCode: String = "", username: String = "", password: String = "", autoReconnect: Bool = false) {
         self.id = id; self.title = title; self.endpointURL = endpointURL
         self.authMethod = authMethod; self.serialNumber = serialNumber
         self.pinCode = pinCode; self.username = username; self.password = password
+        self.autoReconnect = autoReconnect
     }
 }
 
@@ -1055,20 +1061,40 @@ final class AppState: ObservableObject {
     private func restartIfNeededAfterProcessExit(for id: UUID, runtimeState: TunnelRuntimeState, now: Date) async {
         guard deletingTunnelIDs.contains(id) == false else { return }
         guard disconnectRequested.contains(id) == false else { return }
-        guard runtimeState.lastError?.isRetryable == true else { return }
         guard runtimeState.isNgateReconnecting == false else { return }
         guard activeStartupTunnelIDs.contains(id) == false else { return }
         guard watchdogRestartingTunnels.contains(id) == false else { return }
-        guard runtimeState.status == .failed else { return }
 
-        // Circuit breaker — too many consecutive failures means the
-        // remote side is genuinely unavailable. Stop hammering, wait for
-        // the user to take an explicit action.
-        guard runtimeState.watchdogPaused == false else { return }
+        // .stopped means the user manually disconnected (handleExit transitions
+        // to .stopped only when disconnectRequested was set). Never reconnect.
+        guard runtimeState.status != .stopped else { return }
 
-        // Exponential backoff. Each consecutive failure roughly doubles
-        // the wait time, so we go 5s → 10s → 20s → 40s → 80s → 160s →
-        // 320s → 640s, capped at watchdogMaxBackoff (15 minutes).
+        let autoReconnect = tunnels.first(where: { $0.id == id })?.autoReconnect == true
+
+        if autoReconnect {
+            // With autoreconnect, reconnect for any exit except config errors
+            // that can't succeed regardless of network (wrong credentials, cert
+            // not found, mismatched hostname). Retrying those would just loop
+            // forever — the user must fix the config first.
+            let isConfigError: Bool
+            switch runtimeState.lastError {
+            case .invalidCredentials, .certificateNotFound, .invalidCertificateHash,
+                 .serverCertificateNameMismatch, .invalidEndpoint:
+                isConfigError = true
+            default:
+                isConfigError = false
+            }
+            guard !isConfigError else { return }
+        } else {
+            // Default behaviour: only reconnect for errors ngate itself
+            // classified as retryable, and honour the circuit breaker.
+            guard runtimeState.lastError?.isRetryable == true else { return }
+            guard runtimeState.status == .failed else { return }
+            guard runtimeState.watchdogPaused == false else { return }
+        }
+
+        // Exponential backoff — keeps behaviour identical whether autoreconnect
+        // is on or off. Goes 5s → 10s → 20s → … capped at watchdogMaxBackoff.
         let failures = runtimeState.consecutiveWatchdogFailures
         let backoff = computeBackoffDelay(failures: failures)
         if let lastRestartAt = runtimeState.lastWatchdogRestartAt,
@@ -1076,12 +1102,11 @@ final class AppState: ObservableObject {
             return
         }
 
-        // We've waited long enough — try again. Bumping the counter
-        // BEFORE the attempt means a successful "vpn online" resets it,
-        // while another failure naturally increases the next backoff.
         let nextFailureCount = failures + 1
-        if nextFailureCount > watchdogMaxConsecutiveFailures {
-            // Give up. Surface a journal note and stop until user acts.
+
+        if !autoReconnect && nextFailureCount > watchdogMaxConsecutiveFailures {
+            // Circuit breaker: give up after too many failures without autoreconnect.
+            // Surface a note and stop until user acts.
             runtime[id]?.watchdogPaused = true
             appendSystemLog(
                 "Watchdog: auto-reconnect paused after \(failures) failed attempts. Toggle the tunnel to retry.",
@@ -1097,10 +1122,11 @@ final class AppState: ObservableObject {
 
         let waited = Int(backoff)
         if failures == 0 {
-            appendSystemLog("Watchdog restarting tunnel after retryable process exit", to: id)
+            appendSystemLog("Watchdog restarting tunnel after unexpected exit", to: id)
         } else {
+            let limitNote = autoReconnect ? "" : "/\(watchdogMaxConsecutiveFailures)"
             appendSystemLog(
-                "Watchdog restarting tunnel (attempt \(nextFailureCount)/\(watchdogMaxConsecutiveFailures), waited \(waited)s)",
+                "Watchdog restarting tunnel (attempt \(nextFailureCount)\(limitNote), waited \(waited)s)",
                 to: id
             )
         }
