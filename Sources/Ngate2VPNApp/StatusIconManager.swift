@@ -21,6 +21,8 @@ class StatusIconManager {
             color = NSColor.secondaryLabelColor
         } else if connectedCount == totalTunnels && totalTunnels > 0 {
             color = NSColor(red: 0.2, green: 0.9, blue: 0.3, alpha: 1.0)
+        } else if connectedCount >= 2 {
+            color = NSColor(red: 0.2, green: 0.4, blue: 1.0, alpha: 1.0)
         } else {
             color = NSColor(red: 0.3, green: 0.6, blue: 1.0, alpha: 1.0)
         }
