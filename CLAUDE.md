@@ -21,9 +21,21 @@ swift test
 # Run a single test class
 swift test --filter NgateOutputParserTests
 swift test --filter DNSPolicyControllerTests
+swift test --filter SecretVaultTests
+swift test --filter WarmProcessTests   # runs the real client against 127.0.0.1:9; skipped without /opt/cprongate/ngateconsoleclient or clang
+
+# One-time: create the local code-signing identity that build-app.sh then uses
+./Scripts/setup-signing-identity.sh
 ```
 
-The built app lands at `build/Ngate2VPN.app`. Open with `open build/Ngate2VPN.app`.
+The built app lands at `build/Ngate2VPN.app` (plus `build/Ngate2VPN-<version>.dmg`). Open with `open build/Ngate2VPN.app`.
+
+### Non-Swift parts of the repo
+
+- `Support/ngategate.c` — the `connect()` interposer used for pre-warming; compiled by `build-app.sh` into the bundle (universal arm64+x86_64).
+- `Scripts/` — `setup-signing-identity.sh` (local signing identity), `build_icon.sh`, `publish_github_release.sh`.
+- `Resources/` — `AppIcon.icns`.
+- Note: the app binary is built for the host architecture only (arm64 here), and `ngateconsoleclient` itself is arm64 — the app is Apple-Silicon-only in practice.
 
 ## Architecture
 
@@ -146,6 +158,8 @@ The whole UI is one file. Colors come from the `DS` design-token enum (each toke
 
 Both `binaryPath` and `hideDockOnClose` are persisted via `@Published` sinks in `AppState.init()` — not via UI-side `onChange`. Adding new persisted `@Published` properties must follow the same pattern (add `$property.sink { [weak self] _ in self?.persist() }` in `init`). Do NOT rely on `ContentView.onChange` for persistence — the window may be closed when the value changes.
 
+Plain `UserDefaults` keys (read/written via `@AppStorage` or `UserDefaults.standard`, not through `persist()`): `autoConnect`, `prewarmTunnels` (default on), `disableTokenSandbox` (escape hatch, default off), `holdDefaultDNS` (default on), `showErrorAlerts`, `appTheme`, `journalLogLevel`, `journalShowSystem`. Tunnel profiles and `binaryPath`/`hideDockOnClose` go through `TunnelPersistence`.
+
 ### Tray menu updates
 
 The tray menu is rebuilt **only** in `menuWillOpen(_:)` (i.e. just before the user sees it). There is intentionally no `objectWillChange` subscription driving `rebuildMenu()` — that pattern caused 500+ rebuilds/sec at `-vvvv` log verbosity. `menuWillOpen` is sufficient because menu items are only visible when open.
@@ -194,7 +208,36 @@ Goal: hide the ~12 s/process token enumeration behind app launch / token inserti
 
 Startup timeout: `connectAllTimeout` is 120 s (certificate tunnels with a Jacarta/CryptoPro token spend ~27–35 s initialising the cert storage before the first VPN session, and 60+ s under contention). The watchdog measures the `.starting` timeout from `TunnelRuntimeState.firstOutputAt` (first non-`[SYSTEM]` line from the process; reset in `connectTunnel`, set in `appendLog`), falling back to `lastStateChange` / `launchedAt`. Do not use `lastStateChange` alone: `updateState` is idempotent (`guard r.status != newState`), so re-starting a tunnel that is already `.starting` never refreshes it and the watchdog fires a false timeout.
 
+### Performance floor and rejected approaches
+
+Measured on the maintainer's Mac (JaCarta token, three profiles: tunnel A = password, tunnel B and tunnel C = certificate). Connect All with warm clients: tunnel A ~2.6 s, tunnel B/tunnel C ~8 s after the click, ~8.6 s total (was ~43 s). The remaining time is the token: certificate tunnels each need a container pick (~3 s) and a TLS-handshake signature (~1.7 s) on the token, and the token serves them one at a time. Do not re-propose:
+
+- token/certificate "caching" — the client has no input for preloaded certificates, its store lives in process memory, and the private key stays on the token anyway;
+- a `csptest` warmup (removed; no effect), CryptoPro reader reconfiguration (`cpconfig` — ruled out by the user), decompiling/patching the client;
+- SIGSTOP-based holding (see Pre-warming) or blocking `librdrjacarta` per process (it provides *both* JaCarta readers, so the VPN certificate's PKCS11 container disappears; the native container is only ~0.4 s of the ~12 s anyway);
+- hidden client options: `--help-all`, the ini keys and env vars were checked — nothing skips the storage scan (`--containerpath` and `-H` do not).
+
+### Debugging with logs
+
+- Per-tunnel logs: `~/Library/Application Support/Ngate2VPN/logs/tunnel_<tunnel-uuid>.log` (5 MB rotation). Ngate lines carry no tunnel tag on disk — map UUID → profile by grepping `[SYSTEM] … [Name]` lines. `[SYSTEM]` lines (`Using pre-warmed client`, `Client pre-warmed`, `Disconnect requested`, `Connect All finished`) are the timeline anchors; `Certificates storages thread staring` → `All local certificates storages operational` is the token-init window.
+- A warm client's output is buffered and only reaches the journal/disk when a Connect adopts it, so an unadopted warm client leaves no trace there (only its `Client pre-warmed` system line).
+- Temp state: `~/Library/Caches/Ngate2VPN/secure-configs/*.cfg` (credentials, 0600, removed on process exit and swept at launch/quit) and `…/gates/*.gate`. Leftovers after tests or a crash are safe to delete; never delete them while a real tunnel is starting.
+- Keychain checks without touching secrets: `security find-generic-password -s NgateVPN -a vault.v1` (no `-w`/`-g`). Do not dump the Keychain.
+- `pgrep -f` can fail with "illegal byte sequence" here; use `ps -A -o pid,command | grep '[n]gateconsoleclient'`.
+
+### Release workflow
+
+1. Bump `APP_VERSION` in `build-app.sh`, the README status line, and add a CHANGELOG entry (Russian, newest first).
+2. `swift test`, then `./build-app.sh` (signs with "Ngate2VPN Local Signing" if present — check the printed `designated =>` line shows `certificate leaf`, not `cdhash`).
+3. The user installs and verifies on real tunnels (`pkill -x Ngate2VPN; rm -rf /Applications/Ngate2VPN.app && cp -R build/Ngate2VPN.app /Applications/ && open /Applications/Ngate2VPN.app`) and reports back with Journal logs. **Do not commit or publish before they confirm it works.**
+4. `git add` the specific files (never `.claude/settings.local.json`), commit, `git push origin main`, then `gh release create vX.Y build/Ngate2VPN-X.Y.dmg --target main --title vX.Y --notes …` (notes in Russian).
+- Users must install a build ≥ 3.27 to read secrets: older builds look for the per-secret Keychain items that `SecretVault` migrates away.
+
 ## Key invariants
+
+- Secrets live in exactly one Keychain item (`SecretVault`, account `vault.v1`); never reintroduce per-tunnel/per-secret items — each is a separate macOS access prompt.
+- Never hide `codesign` failures in `build-app.sh`, and keep the ad-hoc fallback: an unusable identity must not produce an unsigned bundle.
+- Pre-warmed processes stay out of `TunnelProcessManager.processes` until adopted (see Pre-warming); a discarded one must still clean up its credential file.
 
 - Credentials (`pinCode`, `password`) must never reach `UserDefaults` or logs. Always call `sanitizedConfiguration` before persisting.
 - `ngateconsoleclient` must always be launched with `-vvvv` — see `ProcessRunner.swift`.
