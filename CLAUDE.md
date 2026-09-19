@@ -132,7 +132,7 @@ The About panel reads its version from `Bundle.main.infoDictionary["CFBundleShor
 
 ### UI conventions (ContentView.swift)
 
-The whole UI is one file. Colors come from the `DS` design-token enum (each token has a dark/light pair via `NSColor(name:dynamicProvider:)`); corner radii are `DS.r` (10) and `DS.rL` (14). The status-bar (tray) icon is managed by `StatusIconManager` — it tints a `globe` SF Symbol; the disconnected state uses `NSColor.secondaryLabelColor` (NOT a fixed white/black) so it stays visible on both light and dark menu bars.
+The whole UI is one file. Colors come from the `DS` design-token enum (each token has a dark/light pair via `NSColor(name:dynamicProvider:)`); corner radii are `DS.r` (10) and `DS.rL` (14). The status-bar (tray) icon is managed by `StatusIconManager` — it tints a `globe` SF Symbol; the disconnected state uses `NSColor.secondaryLabelColor` (NOT a fixed white/black) so it stays visible on both light and dark menu bars. Color tiers in `updateIcon(connectedCount:totalTunnels:)`: 0 connected = grey, 1 = light blue, 2+ but not all = darker blue `(0.2, 0.4, 1.0)`, all = green. The check order matters (all-connected is tested before `>= 2`); do not darken the mid-blue further — `(0.1, 0.2, 0.8)` was unreadable on dark menu bars.
 
 ### Persistence of settings
 
@@ -159,6 +159,8 @@ The tray menu is rebuilt **only** in `menuWillOpen(_:)` (i.e. just before the us
 ### Connect All startup
 
 `runConnectAllStaggered` starts tunnels in parallel with a 3 s offset per tunnel (`withTaskGroup`, each child calls `connectAndWait` with its own 120 s deadline). Do not make it strictly sequential (each CryptoPro cert-storage init takes ~27 s, so 3 tunnels took ~90 s) and do not start all at once (contention on the CSP/token stretches init to 60+ s). A `csptest` warmup at launch was tried and removed — it does not affect the cert-storage init time.
+
+Startup timeout: `connectAllTimeout` is 120 s (certificate tunnels with a Jacarta/CryptoPro token spend ~27–35 s initialising the cert storage before the first VPN session, and 60+ s under contention). The watchdog measures the `.starting` timeout from `TunnelRuntimeState.firstOutputAt` (first non-`[SYSTEM]` line from the process; reset in `connectTunnel`, set in `appendLog`), falling back to `lastStateChange` / `launchedAt`. Do not use `lastStateChange` alone: `updateState` is idempotent (`guard r.status != newState`), so re-starting a tunnel that is already `.starting` never refreshes it and the watchdog fires a false timeout.
 
 ## Key invariants
 
