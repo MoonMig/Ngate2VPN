@@ -204,8 +204,14 @@ final class TunnelProcess: @unchecked Sendable {
             let stdoutPipe = Pipe()
             let stderrPipe = Pipe()
 
-            process.executableURL = URL(fileURLWithPath: binaryPath)
-            process.arguments = makeArgs(configFilePath: configFile.url.path)
+            let clientArgs = makeArgs(configFilePath: configFile.url.path)
+            if configuration.authMethod == .credentials && Self.tokenSandboxEnabled {
+                process.executableURL = URL(fileURLWithPath: Self.sandboxExecPath)
+                process.arguments = ["-p", Self.noTokenSandboxProfile, binaryPath] + clientArgs
+            } else {
+                process.executableURL = URL(fileURLWithPath: binaryPath)
+                process.arguments = clientArgs
+            }
             process.standardOutput = stdoutPipe
             process.standardError = stderrPipe
 
@@ -353,6 +359,27 @@ final class TunnelProcess: @unchecked Sendable {
     private func wait(on semaphore: DispatchSemaphore?, timeout: TimeInterval) -> Bool {
         guard let semaphore else { return process == nil }
         return semaphore.wait(timeout: .now() + timeout) == .success
+    }
+
+    private static let sandboxExecPath = "/usr/bin/sandbox-exec"
+
+    // ngateconsoleclient enumerates every smartcard container at startup
+    // (~12 s for a JaCarta, and the token is a serial resource shared by all
+    // client processes) even for login/password tunnels that never use it.
+    // sandbox-exec exec()s the client, so the PID is unchanged.
+    private static let noTokenSandboxProfile = """
+        (version 1)
+        (allow default)
+        (deny mach-lookup (global-name "com.apple.ctkpcscd"))
+        (deny file-read* file-map-executable
+          (subpath "/Applications/JaCartaUC.app")
+          (subpath "/Library/Frameworks/jcPKCS11-2.framework"))
+        """
+
+    // Escape hatch: `defaults write com.ngate2vpn.app disableTokenSandbox -bool YES`
+    private static var tokenSandboxEnabled: Bool {
+        FileManager.default.isExecutableFile(atPath: sandboxExecPath)
+            && !UserDefaults.standard.bool(forKey: "disableTokenSandbox")
     }
 
     /// Command-line arguments for ngateconsoleclient. The interesting bit

@@ -156,6 +156,12 @@ The tray menu is rebuilt **only** in `menuWillOpen(_:)` (i.e. just before the us
 
 **Critical**: when a retryable failure is detected (`.failed` or `.stopped` with `canRetry == true`), the code must use `continue outerLoop` (labeled continue) — NOT a bare `break`. A bare `break` exits only the `switch` statement, leaving the inner `while` running and never calling `connectTunnel` again. This was a bug that caused all tunnels except the first to hang in "Connecting" indefinitely.
 
+### Token-less sandbox for password tunnels
+
+`ngateconsoleclient` enumerates every smartcard container at startup regardless of auth method. For a JaCarta this is 6 container reads (~1.7 s each, ≈12 s per process standalone; the same 3 containers are read twice because the token is visible through both the native and the PKCS11 reader), and the token is a serial resource, so N concurrent client processes take roughly N × 12 s. There is no CLI flag or ini option to skip it (`--containerpath` does not help), and a `csptest` warmup does not help either — nothing is cached across processes.
+
+`TunnelProcess.start` therefore launches clients for `authMethod == .credentials` through `/usr/bin/sandbox-exec -p <noTokenSandboxProfile>`, which denies `mach-lookup com.apple.ctkpcscd` and file access to `/Applications/JaCartaUC.app` and `/Library/Frameworks/jcPKCS11-2.framework`. Storage init drops to ~0.3 s and the password login works normally. Certificate tunnels are launched directly and must keep full token access. `sandbox-exec` execs the target, so the PID (and terminate/kill behaviour) is unchanged. It is skipped if `/usr/bin/sandbox-exec` is missing or `disableTokenSandbox` is set in UserDefaults. Do not touch CryptoPro reader configuration (`cpconfig`) as a workaround — the user explicitly ruled that out.
+
 ### Connect All startup
 
 `runConnectAllStaggered` starts tunnels in parallel with a 3 s offset per tunnel (`withTaskGroup`, each child calls `connectAndWait` with its own 120 s deadline). Do not make it strictly sequential (each CryptoPro cert-storage init takes ~27 s, so 3 tunnels took ~90 s) and do not start all at once (contention on the CSP/token stretches init to 60+ s). A `csptest` warmup at launch was tried and removed — it does not affect the cert-storage init time.
