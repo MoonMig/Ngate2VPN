@@ -108,6 +108,11 @@ struct TunnelRuntimeState {
     var logLines: [String] = []
     var launchedAt: Date?
     var lastStateChange: Date?
+    /// Set to the timestamp of the first line of output received from the process.
+    /// The watchdog uses this (not launchedAt) to measure the startup timeout,
+    /// so tunnels that have a silent initialisation period (DNS resolution, cert
+    /// loading) get a full 30 s of actual authentication time, not 30 s from launch.
+    var firstOutputAt: Date?
     var errorMessage: String?
     var lastError: TunnelError?
     var hasEstablishedConnection = false
@@ -197,7 +202,11 @@ final class AppState: ObservableObject {
     private let alertDedupWindow: TimeInterval = 1.5
     private var watchdogRestartingTunnels = Set<UUID>()
     private var deletingTunnelIDs = Set<UUID>()
-    let connectAllTimeout: TimeInterval = 30
+    // Certificate-based tunnels using a hardware token (Jacarta/CryptoPro CSP)
+    // can spend 60+ seconds initialising the certificate storage before the
+    // first VPN session is created, especially when multiple tunnels contend
+    // for the same reader simultaneously. 120 s gives a comfortable margin.
+    let connectAllTimeout: TimeInterval = 120
     private let startupRetryLimit = 1
     private let watchdogInterval: TimeInterval = 5
 
@@ -315,6 +324,7 @@ final class AppState: ObservableObject {
         runtime[id]?.isNgateReconnecting = false
         runtime[id]?.lastError = nil
         runtime[id]?.clientAddress = nil
+        runtime[id]?.firstOutputAt = nil
         transitionState(id: id, newState: .starting)
         do {
             try processManager.launch(tunnelID: id, binaryPath: url.path, configuration: configuration,
@@ -362,7 +372,7 @@ final class AppState: ObservableObject {
         }
         connectAllTask = Task { [weak self] in
             guard let self else { return }
-            await self.runConnectAllSequence(tunnelIDs)
+            await self.runConnectAllStaggered(tunnelIDs)
         }
     }
     func disconnectAll() {
@@ -773,6 +783,10 @@ final class AppState: ObservableObject {
             feedDNSParser(pieces: pieces, tunnelID: id)
         }
 
+        if !line.contains("[SYSTEM]") && runtime[id]?.firstOutputAt == nil {
+            runtime[id]?.firstOutputAt = Date()
+        }
+
         for piece in pieces {
             let t = piece.trimmingCharacters(in: .whitespaces)
             guard !t.isEmpty, var r = runtime[id] else { continue }
@@ -882,46 +896,51 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func runConnectAllSequence(_ tunnelIDs: [UUID]) async {
+    private func runConnectAllStaggered(_ tunnelIDs: [UUID]) async {
         defer {
             activeStartupTunnelIDs.removeAll()
             connectAllTask = nil
         }
 
-        // Launch every tunnel in parallel — they don't need to wait for
-        // each other. Each task drives its own connect+wait flow and
-        // reports whether it succeeded.
-        let results: [(title: String, ok: Bool)] = await withTaskGroup(
-            of: (String, Bool).self
-        ) { group in
-            for tunnelID in tunnelIDs {
-                guard tunnels.contains(where: { $0.id == tunnelID }) else { continue }
-                let title = tunnelTitle(for: tunnelID)
+        // Start tunnels in parallel, staggered by a few seconds. Fully
+        // sequential startup waits for each tunnel to finish (~30 s each with
+        // CryptoPro cert-storage init), while a burst start makes the
+        // processes contend for the CSP/token. A short stagger overlaps the
+        // slow initialisation but avoids the burst. Each tunnel has its own
+        // connectAndWait deadline.
+        let staggerNanos: UInt64 = 3_000_000_000
+        var succeeded = 0
+        var failed: [String] = []
+
+        let entries: [(offset: Int, id: UUID, title: String)] = tunnelIDs
+            .filter { id in tunnels.contains(where: { $0.id == id }) }
+            .enumerated()
+            .map { (offset: $0.offset, id: $0.element, title: tunnelTitle(for: $0.element)) }
+
+        await withTaskGroup(of: (String, TunnelState)?.self) { group in
+            for entry in entries {
                 group.addTask { [weak self] in
-                    guard let self else { return (title, false) }
-                    let state = await self.connectAndWait(tunnelID)
-                    switch state {
-                    case .running, .degraded:
-                        return (title, true)
-                    case .stopped, .starting, .stopping, .failed:
-                        return (title, false)
+                    if entry.offset > 0 {
+                        try? await Task.sleep(nanoseconds: staggerNanos * UInt64(entry.offset))
                     }
+                    if Task.isCancelled { return nil }
+                    guard let self else { return nil }
+                    let state = await self.connectAndWait(entry.id)
+                    return (entry.title, state)
                 }
             }
-
-            var collected: [(String, Bool)] = []
             for await result in group {
-                if Task.isCancelled { break }
-                collected.append(result)
+                guard let (title, state) = result else { continue }
+                switch state {
+                case .running, .degraded:
+                    succeeded += 1
+                case .stopped, .starting, .stopping, .failed:
+                    failed.append(title)
+                }
             }
-            return collected
         }
 
         if Task.isCancelled { return }
-
-        var succeeded = 0
-        var failed: [String] = []
-        for r in results { if r.ok { succeeded += 1 } else { failed.append(r.title) } }
 
         if failed.isEmpty {
             appendBulkSystemLog("Connect All finished — \(succeeded) tunnel\(succeeded == 1 ? "" : "s") connected")
@@ -1081,7 +1100,14 @@ final class AppState: ObservableObject {
 
             if runtimeState.status == .starting {
                 guard runtimeState.isNgateReconnecting == false else { continue }
-                let startedAt = runtimeState.lastStateChange ?? runtimeState.launchedAt ?? now
+                // Measure from first process output, not from launch. Some
+                // tunnels (certificate-based) have a silent initialisation
+                // window (DNS, cert loading) of 20+ seconds before they
+                // print anything. Counting from launch would fire the timeout
+                // before the authentication even begins.
+                // Fall back to lastStateChange if no output has arrived yet
+                // so completely silent/hung processes are still killed.
+                let startedAt = runtimeState.firstOutputAt ?? runtimeState.lastStateChange ?? runtimeState.launchedAt ?? now
                 if now.timeIntervalSince(startedAt) >= connectAllTimeout {
                     appendSystemLog("Watchdog detected connection timeout after \(Int(connectAllTimeout)) seconds", to: tunnelID, level: .warning)
                     transitionState(id: tunnelID, newState: .failed, errorMessage: TunnelError.startupTimeout.message, tunnelError: .startupTimeout)

@@ -17,7 +17,7 @@ CONFIG="${1:-release}"
 BUILD_DIR="$(pwd)/.build/${CONFIG}"
 APP_DIR="$(pwd)/build/Ngate2VPN.app"
 APP_BUNDLE_ID="com.ngate2vpn.app"
-APP_VERSION="3.22"
+APP_VERSION="3.23"
 APP_BUILD="1"
 
 echo "==> Building Swift package ($CONFIG)…"

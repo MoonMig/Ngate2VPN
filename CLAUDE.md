@@ -156,6 +156,10 @@ The tray menu is rebuilt **only** in `menuWillOpen(_:)` (i.e. just before the us
 
 **Critical**: when a retryable failure is detected (`.failed` or `.stopped` with `canRetry == true`), the code must use `continue outerLoop` (labeled continue) — NOT a bare `break`. A bare `break` exits only the `switch` statement, leaving the inner `while` running and never calling `connectTunnel` again. This was a bug that caused all tunnels except the first to hang in "Connecting" indefinitely.
 
+### Connect All startup
+
+`runConnectAllStaggered` starts tunnels in parallel with a 3 s offset per tunnel (`withTaskGroup`, each child calls `connectAndWait` with its own 120 s deadline). Do not make it strictly sequential (each CryptoPro cert-storage init takes ~27 s, so 3 tunnels took ~90 s) and do not start all at once (contention on the CSP/token stretches init to 60+ s). A `csptest` warmup at launch was tried and removed — it does not affect the cert-storage init time.
+
 ## Key invariants
 
 - Credentials (`pinCode`, `password`) must never reach `UserDefaults` or logs. Always call `sanitizedConfiguration` before persisting.
