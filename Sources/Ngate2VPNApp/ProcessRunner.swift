@@ -485,7 +485,7 @@ final class TunnelProcess: @unchecked Sendable {
         """
 
     // Escape hatch: `defaults write com.ngate2vpn.app disableTokenSandbox -bool YES`
-    private static var tokenSandboxEnabled: Bool {
+    static var tokenSandboxEnabled: Bool {
         FileManager.default.isExecutableFile(atPath: sandboxExecPath)
             && !UserDefaults.standard.bool(forKey: "disableTokenSandbox")
     }

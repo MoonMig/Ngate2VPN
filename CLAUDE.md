@@ -36,7 +36,7 @@ AppState (@MainActor)
   ├── tunnels: [TunnelConfiguration]       ← persisted to UserDefaults via TunnelPersistence
   ├── runtime: [UUID: TunnelRuntimeState]  ← in-memory only
   ├── TunnelProcessManager                 ← spawns/kills ngateconsoleclient processes
-  ├── KeychainSecretStore                  ← PIN / password, never in UserDefaults
+  ├── SecretVault (→ KeychainSecretStore)  ← PIN / password of ALL tunnels in ONE Keychain item, never in UserDefaults
   ├── DNSPolicyController                  ← aggregates DNS configs from all tunnels
   └── DNSApplier                           ← applies policy to /etc/resolver/ via sudoers helper
 ```
@@ -52,7 +52,15 @@ AppState (@MainActor)
 
 ### Credential security
 
-`TunnelConfiguration` stores credentials in-memory during profile editing. Before any persistence (`TunnelPersistence.save`) or connection start, `sanitizedConfiguration(_:)` strips `pinCode` and `password` to empty strings. The actual secrets live only in `KeychainSecretStore`. At connection time `resolvedConfigurationForStart` re-injects them from Keychain.
+`TunnelConfiguration` stores credentials in-memory during profile editing. Before any persistence (`TunnelPersistence.save`) or connection start, `sanitizedConfiguration(_:)` strips `pinCode` and `password` to empty strings. The actual secrets live only in the Keychain, accessed through `SecretVault` (see below). At connection time `resolvedConfigurationForStart` re-injects them from Keychain.
+
+### Keychain: one item, stable signing identity
+
+macOS prompts per Keychain **item**, and an ad-hoc-signed app is a different app after every build, so per-secret items meant N prompts after each update.
+
+- **`SecretVault`** keeps every tunnel's PIN/password in one item (`service NgateVPN`, `account vault.v1`, JSON `{tunnelUUID: {pin, password}}`), reads it once and caches it in memory. One prompt for all tunnels. The old per-secret items (`<id>_pin`, `<id>_password`) are migrated on first load and then deleted; any read error during migration aborts it without writing, so a denied prompt is simply retried later. `AppState.saveSecretsIfNeeded` treats an empty field as "unchanged" (profile forms never show stored secrets) and drops the other auth method's secret.
+- **Stable signing.** `Scripts/setup-signing-identity.sh` creates a self-signed code-signing identity ("Ngate2VPN Local Signing") once; `build-app.sh` signs with it when present (override with `SIGN_IDENTITY`), falling back to ad-hoc. The designated requirement then pins the certificate, not the cdhash, so "Always Allow" survives updates. `codesign` only uses a *trusted* identity (`security add-trusted-cert -p codeSign`, needs an interactive password) — an untrusted one reports "no identity found". Do not hide `codesign` errors in `build-app.sh` (`sign_app` returns non-zero and the script falls back explicitly).
+- Keychain reads happen on the main actor (first read may block on the prompt); pre-warming uses the quiet resolver so a prompt at launch never fails a tunnel.
 
 ### Process management
 
@@ -170,6 +178,7 @@ Goal: hide the ~12 s/process token enumeration behind app launch / token inserti
 - **Launch chain.** `TunnelProcess.start(gated: true)` runs `env DYLD_INSERT_LIBRARIES=… NGATE2VPN_GATE_FILE=… NGATE2VPN_GATE_PARENT=<pid> <client> …`. For password tunnels it is `sandbox-exec -p <profile> env … <client>` — **`env` must come after `sandbox-exec`**, because SIP-protected binaries strip `DYLD_*` from the environment they pass on; `env` (re)sets the variables right before exec'ing the client.
 - **Separation.** Warm processes live in `TunnelProcessManager.warm`, NOT in `processes`. The watchdog, `state(for:)`, status and alerts never see them; the tunnel stays `.stopped`. Their output is buffered inside `TunnelProcess` and replayed on adoption. `connectTunnel` calls `adoptWarm` before a cold `launch`: `.adopted` (gate released), `.stale` (settings signature differs — discarded, cold start), `.unavailable`. Adoption is allowed even while the client is still initialising (it just releases the gate early).
 - **When to warm** (`AppState.schedulePrewarm`, staggered 3 s because launches contend for the token): launch (skipped if Auto-connect is on), token inserted, **at the moment of a user Disconnect** (`disconnectTunnel` → `schedulePrewarm(duringDisconnect: true)`: the replacement's token read overlaps the old client's shutdown; `TunnelProcessManager.prewarm` allows this only while the old process is `.stopping`; `handleExit` re-arms as a fallback), after profile edit, after wake, when the setting is switched on. Certificate tunnels only when `TokenMonitor` (IOKit, USB interface class 0x0B) sees a token; token removal, sleep, profile edit/delete and quit discard warm processes (SIGKILL — no session to close).
+- **Who is warmed.** Only tunnels that read the token (`needsToken`: certificate auth, or password auth when the token sandbox is disabled). Password tunnels in the sandbox init in ~0.3 s, so warming them buys nothing and would leave an idle process plus its credential file around. `runConnectAllStaggered` likewise starts non-token tunnels immediately and only staggers token-using cold ones.
 - **Signature.** `warmSignature` = SHA-256 of title/URL/auth/cert/PIN/user/password. A warm client is only adopted if it matches the resolved configuration at Connect time.
 - **Quiet resolution.** Pre-warming uses `resolvedConfigurationForStart(…, quiet: true)`: missing Keychain secrets must not log, alert, or fail the tunnel.
 - **Invariants.**

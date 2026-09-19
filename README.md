@@ -4,7 +4,7 @@
 Написан на SwiftUI, с дизайном в духе Shadowrocket и нативной эстетикой
 macOS.
 
-> **Статус:** v3.25 — production-ready
+> **Статус:** v3.27 — production-ready
 
 ---
 
@@ -115,7 +115,7 @@ open build/Ngate2VPN.app
 Скрипт `build-app.sh`:
 - Запускает `swift build -c release`
 - Собирает `.app` bundle в `build/Ngate2VPN.app`
-- Подписывает ad-hoc подписью (для production требуется Developer ID)
+- Подписывает локальной идентичностью `Ngate2VPN Local Signing`, если она создана (`./Scripts/setup-signing-identity.sh`, один раз — тогда «Always Allow» для Keychain переживает обновления), иначе ad-hoc подписью (для production требуется Developer ID)
 - Копирует AppIcon если он есть в `Resources/`
 
 ### Настройка пути к бинарнику
@@ -231,7 +231,7 @@ Ngate2VPN.app/Contents/MacOS/Ngate2VPN
         │   └── DNSApplier (применение к /etc/resolver/)
         │
         ├── ProcessRunner (управление ngate-client)
-        ├── KeychainSecretStore (VPN credentials)
+        ├── SecretVault → KeychainSecretStore (VPN credentials, один элемент Keychain)
         └── FileLogger (actor, асинхронные логи)
 ```
 
@@ -247,7 +247,8 @@ Ngate2VPN.app/Contents/MacOS/Ngate2VPN
 | `DNSPolicyController.swift`   | Агрегатор DNS политик от всех туннелей                    |
 | `DNSApplier.swift`            | Применение политик через sudoers helper                   |
 | `ProcessRunner.swift`         | Запуск и мониторинг ngate-client процессов, secure-config |
-| `KeychainSecretStore.swift`   | Сохранение VPN credentials в Keychain                     |
+| `KeychainSecretStore.swift`   | Низкоуровневый доступ к Keychain                          |
+| `SecretVault.swift`           | Все секреты туннелей в одном элементе Keychain            |
 | `FileLogger.swift`            | Асинхронные логи (actor) с ротацией                       |
 | `StatusIconManager.swift`     | Иконка в статус-баре                                      |
 

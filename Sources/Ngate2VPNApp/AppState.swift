@@ -180,6 +180,7 @@ final class AppState: ObservableObject {
     
     var statusIconManager: StatusIconManager?
     private let keychain = KeychainSecretStore()
+    private lazy var vault = SecretVault(store: keychain, knownTunnelIDs: { [weak self] in self?.tunnels.map(\.id) ?? [] })
     private let processManager = TunnelProcessManager()
     private var fileLoggers: [UUID: FileLogger] = [:]
     private var disconnectRequested = Set<UUID>()
@@ -938,10 +939,13 @@ final class AppState: ObservableObject {
 
         // Pre-warmed tunnels have already done the slow token work, so they
         // start at once; only cold ones are staggered against each other.
+        // Tunnels that don't touch the token (password, sandboxed) have
+        // nothing to contend for and start immediately too.
         var coldCount = 0
         var entries: [(offset: Int, id: UUID, title: String)] = []
-        for id in tunnelIDs where tunnels.contains(where: { $0.id == id }) {
-            if processManager.hasWarm(tunnelID: id) {
+        for id in tunnelIDs {
+            guard let tunnel = tunnels.first(where: { $0.id == id }) else { continue }
+            if processManager.hasWarm(tunnelID: id) || !needsToken(tunnel) {
                 entries.append((offset: 0, id: id, title: tunnelTitle(for: id)))
             } else {
                 entries.append((offset: coldCount, id: id, title: tunnelTitle(for: id)))
@@ -1150,8 +1154,17 @@ final class AppState: ObservableObject {
                   runtime[id]?.status == .stopped,
                   processManager.state(for: id) == nil else { return false }
         }
-        if tunnels.first(where: { $0.id == id })?.authMethod == .certificate && !tokenPresent { return false }
+        guard let tunnel = tunnels.first(where: { $0.id == id }) else { return false }
+        guard needsToken(tunnel) else { return false }
+        if tunnel.authMethod == .certificate && !tokenPresent { return false }
         return true
+    }
+
+    /// Whether this tunnel's client spends ~12 s reading the token at start.
+    /// Password tunnels run in the no-token sandbox (0.3 s init), so warming
+    /// them would only keep an idle process and its credential file around.
+    private func needsToken(_ tunnel: TunnelConfiguration) -> Bool {
+        tunnel.authMethod == .certificate || !TunnelProcess.tokenSandboxEnabled
     }
 
     private func tunnelsContain(_ id: UUID) -> Bool {
@@ -1390,41 +1403,29 @@ final class AppState: ObservableObject {
         return min(raw, watchdogMaxBackoff)
     }
 
+    /// Stores the secret that matches the profile's auth method and drops the
+    /// other one. An empty field means "unchanged" — profile forms never show
+    /// stored secrets, so an untouched PIN/password arrives here empty.
     private func saveSecretsIfNeeded(from configuration: TunnelConfiguration) {
-        switch configuration.authMethod {
-        case .certificate:
-            do {
-                try keychain.deleteSecret(account: passwordAccount(for: configuration.id))
-            } catch {
-                appendSystemLog("Failed to clear credentials from Keychain.", to: configuration.id, level: .warning)
-            }
-            if !configuration.pinCode.isEmpty {
-                do {
-                    try keychain.saveSecret(account: pinAccount(for: configuration.id), value: configuration.pinCode)
-                } catch {
-                    appendSystemLog("Failed to save credentials to Keychain.", to: configuration.id, level: .warning)
+        do {
+            try vault.update(configuration.id) { entry in
+                switch configuration.authMethod {
+                case .certificate:
+                    entry.password = nil
+                    if !configuration.pinCode.isEmpty { entry.pin = configuration.pinCode }
+                case .credentials:
+                    entry.pin = nil
+                    if !configuration.password.isEmpty { entry.password = configuration.password }
                 }
             }
-        case .credentials:
-            do {
-                try keychain.deleteSecret(account: pinAccount(for: configuration.id))
-            } catch {
-                appendSystemLog("Failed to clear credentials from Keychain.", to: configuration.id, level: .warning)
-            }
-            if !configuration.password.isEmpty {
-                do {
-                    try keychain.saveSecret(account: passwordAccount(for: configuration.id), value: configuration.password)
-                } catch {
-                    appendSystemLog("Failed to save credentials to Keychain.", to: configuration.id, level: .warning)
-                }
-            }
+        } catch {
+            appendSystemLog("Failed to save credentials to Keychain.", to: configuration.id, level: .warning)
         }
     }
 
     private func deleteStoredSecrets(for tunnelID: UUID) {
         do {
-            try keychain.deleteSecret(account: passwordAccount(for: tunnelID))
-            try keychain.deleteSecret(account: pinAccount(for: tunnelID))
+            try vault.remove(tunnelID)
         } catch {
             appendSystemLog("Failed to delete credentials from Keychain.", to: tunnelID, level: .warning)
         }
@@ -1437,7 +1438,7 @@ final class AppState: ObservableObject {
         do {
             switch resolved.authMethod {
             case .certificate:
-                guard let pin = try keychain.getSecret(account: pinAccount(for: tunnelID)), !pin.isEmpty else {
+                guard let pin = try vault.pin(for: tunnelID), !pin.isEmpty else {
                     if quiet { return nil }
                     let message = "PIN not found in Keychain. Open the profile and save your PIN first."
                     appendSystemLog(message, to: tunnelID, level: .error)
@@ -1447,7 +1448,7 @@ final class AppState: ObservableObject {
                 }
                 resolved.pinCode = pin
             case .credentials:
-                guard let password = try keychain.getSecret(account: passwordAccount(for: tunnelID)), !password.isEmpty else {
+                guard let password = try vault.password(for: tunnelID), !password.isEmpty else {
                     if quiet { return nil }
                     let message = "Password not found in Keychain. Open the profile and save your password first."
                     appendSystemLog(message, to: tunnelID, level: .error)
@@ -1482,14 +1483,6 @@ final class AppState: ObservableObject {
             }
             return Self.sanitizedConfiguration(configuration)
         }
-    }
-
-    private func passwordAccount(for tunnelID: UUID) -> String {
-        "\(tunnelID.uuidString)_password"
-    }
-
-    private func pinAccount(for tunnelID: UUID) -> String {
-        "\(tunnelID.uuidString)_pin"
     }
 
     private func logger(for tunnelID: UUID) -> FileLogger {

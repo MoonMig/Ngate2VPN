@@ -17,7 +17,7 @@ CONFIG="${1:-release}"
 BUILD_DIR="$(pwd)/.build/${CONFIG}"
 APP_DIR="$(pwd)/build/Ngate2VPN.app"
 APP_BUNDLE_ID="com.ngate2vpn.app"
-APP_VERSION="3.25"
+APP_VERSION="3.27"
 APP_BUILD="1"
 
 echo "==> Building Swift package ($CONFIG)…"
@@ -38,7 +38,6 @@ GATE_LIB="$APP_DIR/Contents/Resources/libngategate.dylib"
 if clang -arch arm64 -arch x86_64 -dynamiclib -O2 -install_name @rpath/libngategate.dylib \
         -o "$GATE_LIB" Support/ngategate.c 2>/dev/null \
    || clang -dynamiclib -O2 -install_name @rpath/libngategate.dylib -o "$GATE_LIB" Support/ngategate.c; then
-    codesign --force --sign - "$GATE_LIB" 2>/dev/null || true
     echo "    built: libngategate.dylib"
 else
     echo "    skipped — clang failed; tunnel pre-warming will be unavailable"
@@ -97,16 +96,38 @@ cat > "$APP_DIR/Contents/Info.plist" <<EOF
 </plist>
 EOF
 
-echo "==> Code signing (ad-hoc) …"
-codesign --force --options=runtime \
-    --identifier "$APP_BUNDLE_ID" \
-    --sign - \
-    "$APP_DIR/Contents/MacOS/Ngate2VPN" 2>/dev/null || true
+# Signing identity. An ad-hoc signature changes on every build, which makes the
+# login keychain re-ask for access after each update; a stable local identity
+# (created once by Scripts/setup-signing-identity.sh) keeps "Always Allow" valid.
+SIGN_IDENTITY="${SIGN_IDENTITY:-Ngate2VPN Local Signing}"
 
-codesign --force --deep --options=runtime \
-    --identifier "$APP_BUNDLE_ID" \
-    --sign - \
-    "$APP_DIR" 2>/dev/null || true
+sign_app() {
+    local identity="$1"
+    if [[ -f "$GATE_LIB" ]]; then
+        codesign --force --sign "$identity" "$GATE_LIB" || return 1
+    fi
+    codesign --force --options=runtime \
+        --identifier "$APP_BUNDLE_ID" \
+        --sign "$identity" \
+        "$APP_DIR/Contents/MacOS/Ngate2VPN" || return 1
+    codesign --force --deep --options=runtime \
+        --identifier "$APP_BUNDLE_ID" \
+        --sign "$identity" \
+        "$APP_DIR" || return 1
+}
+
+if security find-identity -v -p codesigning 2>/dev/null | grep -q "\"$SIGN_IDENTITY\""; then
+    echo "==> Code signing with \"$SIGN_IDENTITY\" (stable identity)…"
+    if ! sign_app "$SIGN_IDENTITY"; then
+        echo "    ✗ signing with \"$SIGN_IDENTITY\" failed — falling back to ad-hoc"
+        sign_app - || echo "    ✗ ad-hoc signing failed too"
+    fi
+else
+    echo "==> Code signing (ad-hoc) …"
+    echo "    Tip: run ./Scripts/setup-signing-identity.sh once so keychain approvals survive updates."
+    sign_app - || echo "    ✗ ad-hoc signing failed"
+fi
+echo "    $(codesign -dr - "$APP_DIR" 2>&1 | grep -E '^designated' || echo 'designated requirement: (unavailable)')"
 
 echo ""
 echo "✓ Built: $APP_DIR"
