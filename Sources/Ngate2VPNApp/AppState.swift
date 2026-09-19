@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import Combine
+import CryptoKit
 
 enum SystemLogLevel: String {
     case info = "Info"
@@ -186,6 +187,9 @@ final class AppState: ObservableObject {
     private var connectAllTask: Task<Void, Never>?
     private var activeStartupTunnelIDs = Set<UUID>()
     private var watchdogTask: Task<Void, Never>?
+    private let tokenMonitor = TokenMonitor()
+    private var tokenStateKnown = false
+    private var tokenPresent = false
 
     /// Queue of alerts waiting to be shown. When an alert is already on
     /// screen, additional alerts go here instead of being dropped, so
@@ -293,8 +297,10 @@ final class AppState: ObservableObject {
         // or on app quit — meaning DNS Helper is completely inert after a restart
         // if the user never opens Settings.
         _ = dnsApplier
+
+        startPrewarmSupport()
     }
-    
+
     deinit {
         watchdogTask?.cancel()
         processManager.terminateAll()
@@ -326,11 +332,25 @@ final class AppState: ObservableObject {
         runtime[id]?.clientAddress = nil
         runtime[id]?.firstOutputAt = nil
         transitionState(id: id, newState: .starting)
+        let onOutput: @Sendable (String) -> Void = { [weak self] t in Task { @MainActor in self?.appendLog(t, to: id) } }
+        let onStateChange: @Sendable (TunnelState) -> Void = { [weak self] state in Task { @MainActor in self?.handleProcessStateChange(id, state: state) } }
+        let onExit: @Sendable (Int32) -> Void = { [weak self] c in Task { @MainActor in self?.handleExit(id, code: c) } }
+
+        switch processManager.adoptWarm(tunnelID: id, signature: Self.warmSignature(of: configuration),
+                                        onOutput: onOutput, onStateChange: onStateChange, onExit: onExit) {
+        case .adopted:
+            runtime[id]?.launchedAt = Date()
+            appendSystemLog("Using pre-warmed client", to: id)
+            return
+        case .stale:
+            appendSystemLog("Pre-warmed client was built from older settings — starting a fresh one", to: id)
+        case .unavailable:
+            break
+        }
+
         do {
             try processManager.launch(tunnelID: id, binaryPath: url.path, configuration: configuration,
-                onOutput: { [weak self] t in Task { @MainActor in self?.appendLog(t, to: id) } },
-                onStateChange: { [weak self] state in Task { @MainActor in self?.handleProcessStateChange(id, state: state) } },
-                onExit: { [weak self] c in Task { @MainActor in self?.handleExit(id, code: c) } })
+                onOutput: onOutput, onStateChange: onStateChange, onExit: onExit)
             runtime[id]?.launchedAt = Date()
         } catch {
             let launchError = TunnelError.launchFailed
@@ -349,6 +369,7 @@ final class AppState: ObservableObject {
         watchdogRestartingTunnels.remove(id)
         processManager.terminate(tunnelID: id)
         appendSystemLog("Disconnect requested", to: id)
+        schedulePrewarm(only: [id], duringDisconnect: true)
     }
     
     func connectAll() {
@@ -442,6 +463,8 @@ final class AppState: ObservableObject {
             saveSecretsIfNeeded(from: configuration)
             tunnels[idx] = Self.sanitizedConfiguration(configuration)
             persist()
+            processManager.discardWarm(tunnelID: configuration.id)
+            schedulePrewarm(only: [configuration.id], delay: 2)
         }
     }
     
@@ -574,6 +597,7 @@ final class AppState: ObservableObject {
         if disconnectRequested.remove(id) != nil {
             appendSystemLog("Stopped", to: id)
             transitionState(id: id, newState: .stopped)
+            schedulePrewarm(only: [id], delay: 2)
             return
         }
 
@@ -912,10 +936,18 @@ final class AppState: ObservableObject {
         var succeeded = 0
         var failed: [String] = []
 
-        let entries: [(offset: Int, id: UUID, title: String)] = tunnelIDs
-            .filter { id in tunnels.contains(where: { $0.id == id }) }
-            .enumerated()
-            .map { (offset: $0.offset, id: $0.element, title: tunnelTitle(for: $0.element)) }
+        // Pre-warmed tunnels have already done the slow token work, so they
+        // start at once; only cold ones are staggered against each other.
+        var coldCount = 0
+        var entries: [(offset: Int, id: UUID, title: String)] = []
+        for id in tunnelIDs where tunnels.contains(where: { $0.id == id }) {
+            if processManager.hasWarm(tunnelID: id) {
+                entries.append((offset: 0, id: id, title: tunnelTitle(for: id)))
+            } else {
+                entries.append((offset: coldCount, id: id, title: tunnelTitle(for: id)))
+                coldCount += 1
+            }
+        }
 
         await withTaskGroup(of: (String, TunnelState)?.self) { group in
             for entry in entries {
@@ -1037,6 +1069,132 @@ final class AppState: ObservableObject {
         activeStartupTunnelIDs.removeAll()
     }
 
+    // MARK: - Pre-warming
+    //
+    // ngateconsoleclient spends ~12 s per process reading every token
+    // container before it connects. We start clients ahead of time, held just
+    // before their first network connect (see Support/ngategate.c), and on
+    // Connect hand the live one to the tunnel state machine and release it.
+    // Warm processes are kept in `processManager.warm`, invisible to the
+    // watchdog and status logic until adopted.
+
+    private var prewarmEnabled: Bool {
+        (UserDefaults.standard.object(forKey: "prewarmTunnels") as? Bool ?? true)
+            && GateSupport.libraryURL != nil
+    }
+
+    private func startPrewarmSupport() {
+        tokenMonitor.start { [weak self] present in
+            Task { @MainActor in self?.handleTokenChange(present) }
+        }
+    }
+
+    /// Called from Settings when the "Pre-warm tunnels" switch flips.
+    func prewarmSettingChanged() {
+        if prewarmEnabled {
+            schedulePrewarm()
+        } else {
+            processManager.discardAllWarm()
+        }
+    }
+
+    private func handleTokenChange(_ present: Bool) {
+        let isInitial = !tokenStateKnown
+        let wasPresent = tokenPresent
+        tokenStateKnown = true
+        tokenPresent = present
+
+        if !isInitial && present != wasPresent {
+            appendBulkSystemLog(present ? "Smartcard token detected" : "Smartcard token removed")
+        }
+        if !present {
+            // Certificate clients that were warmed against this token are stale.
+            for tunnel in tunnels where tunnel.authMethod == .certificate {
+                processManager.discardWarm(tunnelID: tunnel.id)
+            }
+        }
+        // With auto-connect the tunnels are about to be started anyway.
+        if isInitial && UserDefaults.standard.bool(forKey: "autoConnect") && !tunnels.isEmpty { return }
+        if isInitial || present != wasPresent {
+            schedulePrewarm(delay: isInitial ? 1 : 3)
+        }
+    }
+
+    /// - Parameter duringDisconnect: warm the replacement while the old
+    ///   client is still shutting down after a user Disconnect, so its slow
+    ///   token read overlaps the shutdown instead of following it.
+    private func schedulePrewarm(only ids: [UUID]? = nil, delay: TimeInterval = 0, duringDisconnect: Bool = false) {
+        guard prewarmEnabled else { return }
+        Task { @MainActor [weak self] in
+            if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
+            guard let self else { return }
+            var launchedAny = false
+            for id in ids ?? self.tunnels.map(\.id) {
+                guard self.shouldPrewarm(id, duringDisconnect: duringDisconnect) else { continue }
+                // Stagger launches: they contend for the same token.
+                if launchedAny { try? await Task.sleep(nanoseconds: 3_000_000_000) }
+                if self.prewarmTunnel(id, duringDisconnect: duringDisconnect) { launchedAny = true }
+            }
+        }
+    }
+
+    private func shouldPrewarm(_ id: UUID, duringDisconnect: Bool = false) -> Bool {
+        guard prewarmEnabled, tunnelsContain(id) else { return false }
+        guard deletingTunnelIDs.contains(id) == false,
+              processManager.hasWarm(tunnelID: id) == false else { return false }
+        if duringDisconnect {
+            guard disconnectRequested.contains(id) else { return false }
+        } else {
+            guard disconnectRequested.contains(id) == false,
+                  activeStartupTunnelIDs.contains(id) == false,
+                  runtime[id]?.status == .stopped,
+                  processManager.state(for: id) == nil else { return false }
+        }
+        if tunnels.first(where: { $0.id == id })?.authMethod == .certificate && !tokenPresent { return false }
+        return true
+    }
+
+    private func tunnelsContain(_ id: UUID) -> Bool {
+        tunnels.contains(where: { $0.id == id })
+    }
+
+    /// Returns true if a warm client was actually started.
+    @discardableResult
+    private func prewarmTunnel(_ id: UUID, duringDisconnect: Bool = false) -> Bool {
+        guard shouldPrewarm(id, duringDisconnect: duringDisconnect), let snapshot = snapshot(for: id) else { return false }
+        guard let configuration = resolvedConfigurationForStart(tunnelID: id, from: snapshot.configuration, quiet: true),
+              validate(configuration).isEmpty,
+              FileManager.default.isExecutableFile(atPath: binaryPath) else { return false }
+        do {
+            let started = try processManager.prewarm(
+                tunnelID: id,
+                binaryPath: binaryPath,
+                configuration: configuration,
+                signature: Self.warmSignature(of: configuration),
+                onExit: { [weak self] code, intentional in
+                    Task { @MainActor in self?.handleWarmExit(id, code: code, intentional: intentional) }
+                })
+            if started { appendSystemLog("Client pre-warmed — Connect will be fast", to: id) }
+            return started
+        } catch {
+            appendSystemLog("Pre-warm failed: \(error.localizedDescription)", to: id, level: .warning)
+            return false
+        }
+    }
+
+    private func handleWarmExit(_ id: UUID, code: Int32, intentional: Bool) {
+        guard !intentional, tunnelsContain(id), deletingTunnelIDs.contains(id) == false else { return }
+        appendSystemLog("Pre-warmed client exited (code \(code)); Connect will start a fresh one", to: id, level: .warning)
+    }
+
+    /// Identifies the exact settings a warm client was built from, so a
+    /// stale one (profile edited, password changed) is never reused.
+    private static func warmSignature(of c: TunnelConfiguration) -> String {
+        let material = [c.title, c.endpointURL, c.authMethod.rawValue, c.serialNumber,
+                        c.pinCode, c.username, c.password].joined(separator: "\u{1F}")
+        return SHA256.hash(data: Data(material.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
     private func observeSystemWake() {
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification,
@@ -1062,6 +1220,9 @@ final class AppState: ObservableObject {
             }
         }
         appendBulkSystemLog("System woke from sleep — running watchdog pass")
+        // Warm clients hold token/CSP state from before the sleep; rebuild them.
+        processManager.discardAllWarm()
+        schedulePrewarm(delay: 8)
         Task { [weak self] in
             await self?.runWatchdogPass()
         }
@@ -1269,12 +1430,15 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func resolvedConfigurationForStart(tunnelID: UUID, from configuration: TunnelConfiguration) -> TunnelConfiguration? {
+    /// - Parameter quiet: background use (pre-warming) — return nil on any
+    ///   problem without logging, alerting, or failing the tunnel.
+    private func resolvedConfigurationForStart(tunnelID: UUID, from configuration: TunnelConfiguration, quiet: Bool = false) -> TunnelConfiguration? {
         var resolved = Self.sanitizedConfiguration(configuration)
         do {
             switch resolved.authMethod {
             case .certificate:
                 guard let pin = try keychain.getSecret(account: pinAccount(for: tunnelID)), !pin.isEmpty else {
+                    if quiet { return nil }
                     let message = "PIN not found in Keychain. Open the profile and save your PIN first."
                     appendSystemLog(message, to: tunnelID, level: .error)
                     transitionState(id: tunnelID, newState: .failed, errorMessage: message, tunnelError: .launchFailed)
@@ -1284,6 +1448,7 @@ final class AppState: ObservableObject {
                 resolved.pinCode = pin
             case .credentials:
                 guard let password = try keychain.getSecret(account: passwordAccount(for: tunnelID)), !password.isEmpty else {
+                    if quiet { return nil }
                     let message = "Password not found in Keychain. Open the profile and save your password first."
                     appendSystemLog(message, to: tunnelID, level: .error)
                     transitionState(id: tunnelID, newState: .failed, errorMessage: message, tunnelError: .launchFailed)
@@ -1293,6 +1458,7 @@ final class AppState: ObservableObject {
                 resolved.password = password
             }
         } catch {
+            if quiet { return nil }
             let message = "Failed to load credentials."
             appendSystemLog(message, to: tunnelID, level: .error)
             transitionState(id: tunnelID, newState: .failed, errorMessage: message, tunnelError: .launchFailed)
@@ -1347,6 +1513,7 @@ final class AppState: ObservableObject {
         deletingTunnelIDs.insert(id)
         watchdogRestartingTunnels.remove(id)
         disconnectRequested.insert(id)
+        processManager.discardWarm(tunnelID: id)
 
         let stopped = await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {

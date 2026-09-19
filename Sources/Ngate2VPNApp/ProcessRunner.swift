@@ -45,7 +45,10 @@ struct TunnelConfigFile {
             attributes: [.posixPermissions: 0o700]
         )
 
-        let url = dir.appendingPathComponent("\(configuration.id.uuidString).cfg")
+        // Unique per launch: a pre-warmed process that is being discarded
+        // deletes its own file on exit and must never take a fresh launch's
+        // file with it.
+        let url = dir.appendingPathComponent("\(configuration.id.uuidString)-\(UUID().uuidString.prefix(8)).cfg")
         let body = renderINI(for: configuration)
 
         // Write atomically then chmod. `Data.write(to:options:.atomic)`
@@ -164,9 +167,9 @@ enum TunnelState: String {
 
 final class TunnelProcess: @unchecked Sendable {
     private let queue: DispatchQueue
-    private let onOutput: @Sendable (String) -> Void
-    private let onStateChange: @Sendable (TunnelState) -> Void
-    private let onExit: @Sendable (Int32) -> Void
+    private var onOutput: @Sendable (String) -> Void
+    private var onStateChange: @Sendable (TunnelState) -> Void
+    private var onExit: @Sendable (Int32) -> Void
 
     private var state: TunnelState = .stopped
     private var process: Process?
@@ -176,6 +179,14 @@ final class TunnelProcess: @unchecked Sendable {
     /// Per-process credential file. Lives only for the duration of one
     /// ngateconsoleclient invocation, deleted in handleTermination().
     private var configFile: TunnelConfigFile?
+
+    // Pre-warm ("gated") support. While `gateFile` is set the process is
+    // initialised but held before its first network connect, and its output
+    // is buffered instead of delivered.
+    private var gateFile: URL?
+    private var releasedGateFile: URL?
+    private var buffersOutput = false
+    private var bufferedOutput: [String] = []
 
     init(
         label: String,
@@ -189,7 +200,11 @@ final class TunnelProcess: @unchecked Sendable {
         self.onExit = onExit
     }
 
-    func start(binaryPath: String, configuration: TunnelConfiguration) throws {
+    /// - Parameter gated: start the client pre-warmed — it initialises fully
+    ///   but is held before its first network connect until `adopt` releases
+    ///   the gate. Requires `GateSupport.libraryURL`; falls back to an
+    ///   ordinary (ungated) launch if the library is unavailable.
+    func start(binaryPath: String, configuration: TunnelConfiguration, gated: Bool = false) throws {
         try queue.sync {
             guard state == .stopped else { throw TunnelProcessError.alreadyRunning }
 
@@ -204,14 +219,36 @@ final class TunnelProcess: @unchecked Sendable {
             let stdoutPipe = Pipe()
             let stderrPipe = Pipe()
 
-            let clientArgs = makeArgs(configFilePath: configFile.url.path)
+            var command = [binaryPath] + makeArgs(configFilePath: configFile.url.path)
+            var newGateFile: URL?
+            if gated, let library = GateSupport.libraryURL {
+                do {
+                    let gate = try GateSupport.makeGateFileURL()
+                    // env(1) sets the variables itself: sandbox-exec is a
+                    // SIP-protected binary, so dyld strips DYLD_* from the
+                    // environment it would otherwise pass on to the client.
+                    command = [
+                        "/usr/bin/env",
+                        "DYLD_INSERT_LIBRARIES=\(library.path)",
+                        "NGATE2VPN_GATE_FILE=\(gate.path)",
+                        "NGATE2VPN_GATE_PARENT=\(getpid())",
+                    ] + command
+                    newGateFile = gate
+                } catch {
+                    configFile.delete()
+                    throw error
+                }
+            }
             if configuration.authMethod == .credentials && Self.tokenSandboxEnabled {
                 process.executableURL = URL(fileURLWithPath: Self.sandboxExecPath)
-                process.arguments = ["-p", Self.noTokenSandboxProfile, binaryPath] + clientArgs
+                process.arguments = ["-p", Self.noTokenSandboxProfile] + command
             } else {
-                process.executableURL = URL(fileURLWithPath: binaryPath)
-                process.arguments = clientArgs
+                process.executableURL = URL(fileURLWithPath: command[0])
+                process.arguments = Array(command.dropFirst())
             }
+            self.gateFile = newGateFile
+            self.buffersOutput = newGateFile != nil
+            self.bufferedOutput = []
             process.standardOutput = stdoutPipe
             process.standardError = stderrPipe
 
@@ -225,8 +262,12 @@ final class TunnelProcess: @unchecked Sendable {
             self.configFile = configFile
             transition(to: .starting)
 
-            process.terminationHandler = { [weak self] finishedProcess in
-                self?.handleTermination(process: finishedProcess)
+            // Strong capture on purpose: a discarded warm process is no longer
+            // referenced by the manager, yet must still run its cleanup (it
+            // deletes the credential file) when it exits. The cycle is broken
+            // in handleTermination.
+            process.terminationHandler = { finishedProcess in
+                self.handleTermination(process: finishedProcess)
             }
 
             do {
@@ -290,17 +331,78 @@ final class TunnelProcess: @unchecked Sendable {
         queue.sync { state }
     }
 
+    // MARK: Pre-warm
+
+    /// True while the process is alive and still held at the gate.
+    func isWarmReady() -> Bool {
+        queue.sync { gateFile != nil && state == .running && process?.isRunning == true }
+    }
+
+    func setExitHandler(_ handler: @escaping @Sendable (Int32) -> Void) {
+        queue.sync { onExit = handler }
+    }
+
+    /// Hands a warm process over to the tunnel state machine: installs the
+    /// real callbacks, replays the output buffered so far, and releases the
+    /// gate so the client proceeds to connect. Returns false (touching
+    /// nothing) if the process is no longer warm.
+    func adopt(
+        onOutput: @escaping @Sendable (String) -> Void,
+        onStateChange: @escaping @Sendable (TunnelState) -> Void,
+        onExit: @escaping @Sendable (Int32) -> Void
+    ) -> Bool {
+        queue.sync {
+            guard let gate = gateFile, state == .running, process?.isRunning == true else { return false }
+            guard FileManager.default.createFile(
+                atPath: gate.path, contents: nil, attributes: [.posixPermissions: 0o600]
+            ) else { return false }
+
+            self.onOutput = onOutput
+            self.onStateChange = onStateChange
+            self.onExit = onExit
+            self.buffersOutput = false
+            let pending = bufferedOutput
+            bufferedOutput = []
+            pending.forEach(onOutput)
+
+            // Keep the path so it can be removed once the process is gone.
+            releasedGateFile = gate
+            gateFile = nil
+            return true
+        }
+    }
+
+    /// Kills a warm process immediately (SIGKILL — it holds no session, so
+    /// there is nothing to shut down gracefully).
+    func discardWarm() {
+        queue.async {
+            guard let process = self.process, process.isRunning else { return }
+            kill(process.processIdentifier, SIGKILL)
+        }
+    }
+
     private func installReadabilityHandler(for handle: FileHandle) {
-        handle.readabilityHandler = { [onOutput] readable in
+        handle.readabilityHandler = { [weak self] readable in
             let data = readable.availableData
             guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-            onOutput(text)
+            self?.deliver(text)
+        }
+    }
+
+    private func deliver(_ text: String) {
+        queue.async {
+            if self.buffersOutput {
+                self.bufferedOutput.append(text)
+            } else {
+                self.onOutput(text)
+            }
         }
     }
 
     private func handleTermination(process finishedProcess: Process) {
         queue.async {
             guard self.process === finishedProcess else { return }
+            finishedProcess.terminationHandler = nil
 
             self.stdoutPipe?.fileHandleForReading.readabilityHandler = nil
             self.stderrPipe?.fileHandleForReading.readabilityHandler = nil
@@ -334,6 +436,12 @@ final class TunnelProcess: @unchecked Sendable {
         // credentials sitting on disk.
         configFile?.delete()
         configFile = nil
+        if let gate = gateFile { try? FileManager.default.removeItem(at: gate) }
+        if let gate = releasedGateFile { try? FileManager.default.removeItem(at: gate) }
+        gateFile = nil
+        releasedGateFile = nil
+        buffersOutput = false
+        bufferedOutput = []
         stopCompletion?.signal()
         stopCompletion = nil
     }
@@ -398,9 +506,144 @@ final class TunnelProcess: @unchecked Sendable {
     }
 }
 
+enum WarmAdoption {
+    /// The warm process was handed over and released; it is now connecting.
+    case adopted
+    /// A warm process existed but was built from different settings; it was discarded.
+    case stale
+    /// No usable warm process; the caller should start one normally.
+    case unavailable
+}
+
 final class TunnelProcessManager: @unchecked Sendable {
     private var processes: [UUID: TunnelProcess] = [:]
+    /// Pre-warmed clients, held at the gate and deliberately kept out of
+    /// `processes` so the tunnel state machine (watchdog, status, alerts)
+    /// never sees them until a Connect adopts one.
+    private var warm: [UUID: (process: TunnelProcess, signature: String)] = [:]
+    private var intentionalKills = Set<ObjectIdentifier>()
     private let queue = DispatchQueue(label: "Ngate2VPN.ProcessManager")
+
+    /// Starts a pre-warmed client for the tunnel. `signature` identifies the
+    /// exact configuration it was built from. `onExit` is called (with
+    /// `intentional == true` for kills we requested) when it goes away
+    /// before being adopted. Returns false if pre-warming isn't possible or
+    /// the tunnel already has a process.
+    @discardableResult
+    func prewarm(
+        tunnelID: UUID,
+        binaryPath: String,
+        configuration: TunnelConfiguration,
+        signature: String,
+        onExit: @escaping @Sendable (Int32, Bool) -> Void
+    ) throws -> Bool {
+        guard GateSupport.libraryURL != nil else { return false }
+        let (existing, hasWarm) = queue.sync { (processes[tunnelID], warm[tunnelID] != nil) }
+        guard !hasWarm else { return false }
+        // A client that is shutting down (user pressed Disconnect) doesn't
+        // block warming its replacement — that overlap is the whole point.
+        if let existing, existing.currentState() != .stopping { return false }
+
+        let created = TunnelProcess(
+            label: "Ngate2VPN.Warm.\(tunnelID.uuidString)",
+            onOutput: { _ in },
+            onStateChange: { _ in },
+            onExit: { _ in }
+        )
+        let key = ObjectIdentifier(created)
+        created.setExitHandler { [weak self] code in
+            guard let self else { return }
+            self.queue.async {
+                if let entry = self.warm[tunnelID], ObjectIdentifier(entry.process) == key {
+                    self.warm.removeValue(forKey: tunnelID)
+                }
+                let intentional = self.intentionalKills.remove(key) != nil
+                onExit(code, intentional)
+            }
+        }
+
+        queue.sync { warm[tunnelID] = (created, signature) }
+        do {
+            try created.start(binaryPath: binaryPath, configuration: configuration, gated: true)
+        } catch {
+            queue.sync {
+                if let entry = warm[tunnelID], ObjectIdentifier(entry.process) == key {
+                    warm.removeValue(forKey: tunnelID)
+                }
+            }
+            throw error
+        }
+        return true
+    }
+
+    /// Turns a warm process into the tunnel's live process and releases its
+    /// gate, so it proceeds straight to connecting.
+    func adoptWarm(
+        tunnelID: UUID,
+        signature: String,
+        onOutput: @escaping @Sendable (String) -> Void,
+        onStateChange: @escaping @Sendable (TunnelState) -> Void,
+        onExit: @escaping @Sendable (Int32) -> Void
+    ) -> WarmAdoption {
+        guard let entry = queue.sync(execute: { warm[tunnelID] }) else { return .unavailable }
+        if entry.signature != signature {
+            discardWarm(tunnelID: tunnelID)
+            return .stale
+        }
+
+        let key = ObjectIdentifier(entry.process)
+        queue.sync {
+            warm.removeValue(forKey: tunnelID)
+            processes[tunnelID] = entry.process
+        }
+        let adopted = entry.process.adopt(
+            onOutput: onOutput,
+            onStateChange: onStateChange,
+            onExit: { [weak self] code in
+                if let self {
+                    self.queue.async {
+                        if let current = self.processes[tunnelID], ObjectIdentifier(current) == key {
+                            self.processes.removeValue(forKey: tunnelID)
+                        }
+                    }
+                }
+                onExit(code)
+            }
+        )
+        if adopted { return .adopted }
+
+        queue.sync {
+            if let current = processes[tunnelID], ObjectIdentifier(current) == key {
+                processes.removeValue(forKey: tunnelID)
+            }
+            intentionalKills.insert(key)
+        }
+        entry.process.discardWarm()
+        return .unavailable
+    }
+
+    func hasWarm(tunnelID: UUID) -> Bool {
+        queue.sync { warm[tunnelID] != nil }
+    }
+
+    func discardWarm(tunnelID: UUID) {
+        let process: TunnelProcess? = queue.sync {
+            guard let entry = warm.removeValue(forKey: tunnelID) else { return nil }
+            intentionalKills.insert(ObjectIdentifier(entry.process))
+            return entry.process
+        }
+        process?.discardWarm()
+    }
+
+    func discardAllWarm() {
+        let all: [TunnelProcess] = queue.sync {
+            let processes = warm.values.map(\.process)
+            processes.forEach { intentionalKills.insert(ObjectIdentifier($0)) }
+            warm.removeAll()
+            return processes
+        }
+        all.forEach { $0.discardWarm() }
+    }
 
     func launch(
         tunnelID: UUID,
@@ -474,6 +717,7 @@ final class TunnelProcessManager: @unchecked Sendable {
     }
 
     func terminateAll() {
+        discardAllWarm()
         let activeProcesses = queue.sync { Array(processes.values) }
         activeProcesses.forEach { $0.stop() }
     }

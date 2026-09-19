@@ -223,6 +223,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // its own file with mode 0600; the normal cleanup path deletes it
         // when the process exits, this sweep handles the abnormal one.
         TunnelConfigFile.removeAllStaleConfigs()
+        GateSupport.removeAllStaleGates()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {

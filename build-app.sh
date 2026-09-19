@@ -17,7 +17,7 @@ CONFIG="${1:-release}"
 BUILD_DIR="$(pwd)/.build/${CONFIG}"
 APP_DIR="$(pwd)/build/Ngate2VPN.app"
 APP_BUNDLE_ID="com.ngate2vpn.app"
-APP_VERSION="3.24"
+APP_VERSION="3.25"
 APP_BUILD="1"
 
 echo "==> Building Swift package ($CONFIG)…"
@@ -32,6 +32,17 @@ mkdir -p "$APP_DIR/Contents/Resources"
 
 echo "==> Copying main executable…"
 cp "$BUILD_DIR/Ngate2VPN" "$APP_DIR/Contents/MacOS/Ngate2VPN"
+
+echo "==> Building connect-gate library…"
+GATE_LIB="$APP_DIR/Contents/Resources/libngategate.dylib"
+if clang -arch arm64 -arch x86_64 -dynamiclib -O2 -install_name @rpath/libngategate.dylib \
+        -o "$GATE_LIB" Support/ngategate.c 2>/dev/null \
+   || clang -dynamiclib -O2 -install_name @rpath/libngategate.dylib -o "$GATE_LIB" Support/ngategate.c; then
+    codesign --force --sign - "$GATE_LIB" 2>/dev/null || true
+    echo "    built: libngategate.dylib"
+else
+    echo "    skipped — clang failed; tunnel pre-warming will be unavailable"
+fi
 
 echo "==> Copying AppIcon…"
 ICON_SOURCE=""

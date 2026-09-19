@@ -1270,6 +1270,7 @@ struct LogTextView: NSViewRepresentable {
 struct AppSettingsView: View {
     @EnvironmentObject private var appState: AppState
     @AppStorage("autoConnect")     private var autoConnect     = false
+    @AppStorage("prewarmTunnels")  private var prewarmTunnels  = true
     @AppStorage("appTheme")        private var appTheme        = "System"
     @AppStorage("showErrorAlerts") private var showErrorAlerts = true
 
@@ -1292,6 +1293,8 @@ struct AppSettingsView: View {
                     }
                     ToggleRow(label: "Hide from Dock on close", icon: "dock.rectangle", value: $appState.hideDockOnClose)
                     ToggleRow(label: "Auto-connect on launch",  icon: "bolt.fill",       value: $autoConnect)
+                    ToggleRow(label: "Pre-warm tunnels (faster connect)", icon: "flame.fill", value: $prewarmTunnels)
+                        .onChange(of: prewarmTunnels) { _ in appState.prewarmSettingChanged() }
                 }
 
                 FormBlock("Notifications") {
