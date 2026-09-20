@@ -5,6 +5,18 @@ import IOKit
 /// `Support/ngategate.c` for the injected library that does the holding.
 enum GateSupport {
 
+    /// ngateconsoleclient abandons a login ~2 min after it started ("Transaction
+    /// timeout happened while connecting to gate"), even if it is being held at
+    /// the gate. `operationsTimeout` (milliseconds) raises that limit for warm
+    /// clients; connectionsTimeout does not help. Measured: default survives
+    /// 100 s but not 200 s; 1_000_000 ms survived 400 s.
+    static let warmOperationsTimeoutMs = 1_200_000
+
+    /// Warm clients older than this are replaced, so they are always well
+    /// inside `warmOperationsTimeoutMs` and adopted tunnels don't carry a huge
+    /// timeout for long.
+    static let maxWarmAge: TimeInterval = 600
+
     /// The interposer library, or nil if it isn't bundled (e.g. `swift run`),
     /// in which case pre-warming is simply unavailable.
     static var libraryURL: URL? {

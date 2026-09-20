@@ -134,6 +134,71 @@ final class WarmProcessTests: XCTestCase {
         XCTAssertTrue(manager.hasWarm(tunnelID: config.id))
     }
 
+    func testWarmConfigRaisesTheClientLoginTimeoutButColdConfigDoesNot() throws {
+        let config = TunnelConfiguration(
+            title: "t", endpointURL: "https://127.0.0.1:9/x/",
+            authMethod: .credentials, username: "u", password: "p"
+        )
+        let warm = try TunnelConfigFile.create(for: config, operationsTimeoutMs: GateSupport.warmOperationsTimeoutMs)
+        let cold = try TunnelConfigFile.create(for: config)
+        defer { warm.delete(); cold.delete() }
+
+        let warmText = try String(contentsOf: warm.url, encoding: .utf8)
+        let coldText = try String(contentsOf: cold.url, encoding: .utf8)
+        XCTAssertTrue(warmText.contains("operationsTimeout=\(GateSupport.warmOperationsTimeoutMs)"))
+        XCTAssertFalse(coldText.contains("operationsTimeout"))
+    }
+
+    func testWarmClientsReportTheirAgeSoStaleOnesCanBeRefreshed() throws {
+        try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: clientPath), "ngateconsoleclient not installed")
+        let library = try buildGateLibrary()
+        setenv("NGATE2VPN_GATE_LIB", library, 1)
+        defer { unsetenv("NGATE2VPN_GATE_LIB"); try? FileManager.default.removeItem(atPath: library) }
+
+        let config = TunnelConfiguration(
+            title: "warm-test", endpointURL: "https://127.0.0.1:9/x/",
+            authMethod: .credentials, username: "u", password: "p"
+        )
+        let manager = TunnelProcessManager()
+        defer { Thread.sleep(forTimeInterval: 1) }
+
+        try manager.prewarm(tunnelID: config.id, binaryPath: clientPath, configuration: config,
+                            signature: "s", onExit: { _, _ in })
+        XCTAssertEqual(manager.warmTunnelIDs(olderThan: 3600), [], "a fresh client is not stale")
+        XCTAssertEqual(manager.warmTunnelIDs(olderThan: 0), [config.id])
+        manager.discardWarm(tunnelID: config.id)
+        XCTAssertEqual(manager.warmTunnelIDs(olderThan: 0), [], "discarded clients are no longer tracked")
+    }
+
+    /// The client abandons a login ~2 min after start unless operationsTimeout
+    /// is raised. Slow, so opt-in: NGATE2VPN_SLOW_TESTS=1 swift test --filter WarmProcessTests
+    func testWarmClientSurvivesBeingHeldLongerThanTheClientsDefaultLoginTimeout() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["NGATE2VPN_SLOW_TESTS"] == "1", "slow (~2.5 min); set NGATE2VPN_SLOW_TESTS=1")
+        try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: clientPath), "ngateconsoleclient not installed")
+        let library = try buildGateLibrary()
+        setenv("NGATE2VPN_GATE_LIB", library, 1)
+        defer { unsetenv("NGATE2VPN_GATE_LIB"); try? FileManager.default.removeItem(atPath: library) }
+
+        let config = TunnelConfiguration(
+            title: "warm-test", endpointURL: "https://127.0.0.1:9/x/",
+            authMethod: .credentials, username: "u", password: "p"
+        )
+        let manager = TunnelProcessManager()
+        defer { _ = manager.terminateAndWait(tunnelID: config.id) }
+
+        try manager.prewarm(tunnelID: config.id, binaryPath: clientPath, configuration: config,
+                            signature: "s", onExit: { _, _ in })
+        Thread.sleep(forTimeInterval: 150)   // default limit is ~120 s
+
+        let output = Collector()
+        let adoption = manager.adoptWarm(tunnelID: config.id, signature: "s",
+                                         onOutput: { output.add($0) }, onStateChange: { _ in }, onExit: { _ in })
+        guard case .adopted = adoption else { return XCTFail("warm client died while held: \(adoption)") }
+
+        XCTAssertTrue(waitFor(5) { output.text.contains("Socket error") }, output.text)
+        XCTAssertFalse(output.text.contains("Transaction timeout"), "client gave up while held at the gate")
+    }
+
     func testStaleSignatureIsDiscardedNotAdopted() throws {
         try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: clientPath), "ngateconsoleclient not installed")
         let library = try buildGateLibrary()

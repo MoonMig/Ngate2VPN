@@ -35,7 +35,11 @@ struct TunnelConfigFile {
     /// terminated. If the write fails partway through we make a best-
     /// effort cleanup so we never leave partially-populated credentials
     /// on disk.
-    static func create(for configuration: TunnelConfiguration) throws -> TunnelConfigFile {
+    /// - Parameter operationsTimeoutMs: overrides the client's transaction
+    ///   timeout (ms). Pre-warmed clients need this: the client arms its login
+    ///   timer when it starts and gives up ~2 min later, whether or not it is
+    ///   being held at the gate.
+    static func create(for configuration: TunnelConfiguration, operationsTimeoutMs: Int? = nil) throws -> TunnelConfigFile {
         try validateINIValues(configuration)
 
         let dir = configsDirectory()
@@ -49,7 +53,7 @@ struct TunnelConfigFile {
         // deletes its own file on exit and must never take a fresh launch's
         // file with it.
         let url = dir.appendingPathComponent("\(configuration.id.uuidString)-\(UUID().uuidString.prefix(8)).cfg")
-        let body = renderINI(for: configuration)
+        let body = renderINI(for: configuration, operationsTimeoutMs: operationsTimeoutMs)
 
         // Write atomically then chmod. `Data.write(to:options:.atomic)`
         // produces the file via a temp+rename, so we can't `umask` it
@@ -96,7 +100,7 @@ struct TunnelConfigFile {
             .appendingPathComponent("secure-configs", isDirectory: true)
     }
 
-    private static func renderINI(for c: TunnelConfiguration) -> String {
+    private static func renderINI(for c: TunnelConfiguration, operationsTimeoutMs: Int?) -> String {
         var lines: [String] = []
         // Header — useful when debugging via the file system; doesn't
         // change ngate's behaviour.
@@ -105,6 +109,9 @@ struct TunnelConfigFile {
         lines.append("; This file is regenerated on every connect and removed on disconnect.")
         lines.append("")
         lines.append("url=\(c.endpointURL)")
+        if let operationsTimeoutMs {
+            lines.append("operationsTimeout=\(operationsTimeoutMs)")
+        }
 
         switch c.authMethod {
         case .certificate:
@@ -213,7 +220,11 @@ final class TunnelProcess: @unchecked Sendable {
             // the difference between credentials being visible to
             // every process via `ps` and being readable only by the
             // current user via a 0600-mode temp file.
-            let configFile = try TunnelConfigFile.create(for: configuration)
+            let willGate = gated && GateSupport.libraryURL != nil
+            let configFile = try TunnelConfigFile.create(
+                for: configuration,
+                operationsTimeoutMs: willGate ? GateSupport.warmOperationsTimeoutMs : nil
+            )
 
             let process = Process()
             let stdoutPipe = Pipe()
@@ -520,7 +531,7 @@ final class TunnelProcessManager: @unchecked Sendable {
     /// Pre-warmed clients, held at the gate and deliberately kept out of
     /// `processes` so the tunnel state machine (watchdog, status, alerts)
     /// never sees them until a Connect adopts one.
-    private var warm: [UUID: (process: TunnelProcess, signature: String)] = [:]
+    private var warm: [UUID: (process: TunnelProcess, signature: String, startedAt: Date)] = [:]
     private var intentionalKills = Set<ObjectIdentifier>()
     private let queue = DispatchQueue(label: "Ngate2VPN.ProcessManager")
 
@@ -562,7 +573,7 @@ final class TunnelProcessManager: @unchecked Sendable {
             }
         }
 
-        queue.sync { warm[tunnelID] = (created, signature) }
+        queue.sync { warm[tunnelID] = (created, signature, Date()) }
         do {
             try created.start(binaryPath: binaryPath, configuration: configuration, gated: true)
         } catch {
@@ -624,6 +635,12 @@ final class TunnelProcessManager: @unchecked Sendable {
 
     func hasWarm(tunnelID: UUID) -> Bool {
         queue.sync { warm[tunnelID] != nil }
+    }
+
+    /// Tunnels whose warm client has been held for longer than `age` seconds.
+    func warmTunnelIDs(olderThan age: TimeInterval) -> [UUID] {
+        let cutoff = Date().addingTimeInterval(-age)
+        return queue.sync { warm.filter { $0.value.startedAt <= cutoff }.map(\.key) }
     }
 
     func discardWarm(tunnelID: UUID) {

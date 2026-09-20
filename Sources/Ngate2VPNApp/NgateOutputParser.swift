@@ -73,6 +73,14 @@ enum NgateOutputParser {
         if normalizedLine.contains("connection refused") {
             return .connectionRefused
         }
+        // The client's own login-transaction timer expired ("Transaction
+        // timeout happened while connecting to gate" followed by "Unable to
+        // login to remote gate in a reasonable time"). Retryable — and also
+        // what a pre-warmed client reports if it sat at the gate too long.
+        if normalizedLine.contains("unable to login to remote gate in a reasonable time") ||
+            normalizedLine.contains("transaction timeout happened while connecting to gate") {
+            return .startupTimeout
+        }
         // Server-side session refresh failed — typically token expiry or
         // server-side reset. Retryable (re-establishing the session usually works).
         //

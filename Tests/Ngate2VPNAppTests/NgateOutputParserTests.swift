@@ -37,6 +37,17 @@ final class NgateOutputParserTests: XCTestCase {
         XCTAssertTrue(error?.isRetryable ?? false)
     }
 
+    func testClassifiesLoginTransactionTimeoutAsRetryable() {
+        for line in [
+            "critical vx0000000105fadd90 unable to login to remote gate in a reasonable time. stopping vpn connection.",
+            "debug htx0000007bfee00d20 transaction timeout happened while connecting to gate. aborting connection and releasing ssl socket",
+        ] {
+            let error = NgateOutputParser.classifyError(from: line)
+            XCTAssertEqual(error, .startupTimeout, line)
+            XCTAssertTrue(error?.isRetryable ?? false)
+        }
+    }
+
     func testExtractsClientAddressFromJsonFragment() {
         let address = NgateOutputParser.extractClientAddress(
             from: #"Debug {"ClientAddress":"10.10.0.42","Other":true}"#

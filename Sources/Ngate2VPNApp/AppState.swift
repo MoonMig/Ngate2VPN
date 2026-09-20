@@ -184,6 +184,8 @@ final class AppState: ObservableObject {
     private let processManager = TunnelProcessManager()
     private var fileLoggers: [UUID: FileLogger] = [:]
     private var disconnectRequested = Set<UUID>()
+    /// When a pre-warmed client was handed to each tunnel; used to spot a warm client that the gateway/client rejects right away.
+    private var warmAdoptedAt: [UUID: Date] = [:]
     private var cancellables = Set<AnyCancellable>()
     private var connectAllTask: Task<Void, Never>?
     private var activeStartupTunnelIDs = Set<UUID>()
@@ -337,10 +339,12 @@ final class AppState: ObservableObject {
         let onStateChange: @Sendable (TunnelState) -> Void = { [weak self] state in Task { @MainActor in self?.handleProcessStateChange(id, state: state) } }
         let onExit: @Sendable (Int32) -> Void = { [weak self] c in Task { @MainActor in self?.handleExit(id, code: c) } }
 
+        warmAdoptedAt.removeValue(forKey: id)
         switch processManager.adoptWarm(tunnelID: id, signature: Self.warmSignature(of: configuration),
                                         onOutput: onOutput, onStateChange: onStateChange, onExit: onExit) {
         case .adopted:
             runtime[id]?.launchedAt = Date()
+            warmAdoptedAt[id] = Date()
             appendSystemLog("Using pre-warmed client", to: id)
             return
         case .stale:
@@ -596,9 +600,26 @@ final class AppState: ObservableObject {
     private func handleExit(_ id: UUID, code: Int32) {
         guard deletingTunnelIDs.contains(id) == false else { return }
         if disconnectRequested.remove(id) != nil {
+            warmAdoptedAt.removeValue(forKey: id)
             appendSystemLog("Stopped", to: id)
             transitionState(id: id, newState: .stopped)
             schedulePrewarm(only: [id], delay: 2)
+            return
+        }
+
+        // A pre-warmed client that dies within seconds of being released —
+        // typically the client's own login timer expiring because it sat at
+        // the gate too long — is not a real connection failure. Start a fresh
+        // client once instead of surfacing an error the user has to retry.
+        if let adoptedAt = warmAdoptedAt.removeValue(forKey: id),
+           Date().timeIntervalSince(adoptedAt) < 30,
+           runtime[id]?.hasEstablishedConnection != true,
+           runtime[id]?.lastError == nil || runtime[id]?.lastError == .startupTimeout {
+            appendSystemLog("Pre-warmed client was rejected by the gateway login timer — starting a fresh one", to: id, level: .warning)
+            runtime[id]?.isNgateReconnecting = false
+            runtime[id]?.lastError = nil
+            transitionState(id: id, newState: .stopped)
+            connectTunnel(id)
             return
         }
 
@@ -851,6 +872,7 @@ final class AppState: ObservableObject {
 
             if normalized.contains("vpn online") {
                 runtime[id]?.hasEstablishedConnection = true
+                warmAdoptedAt.removeValue(forKey: id)
                 runtime[id]?.isNgateReconnecting = false
                 // Successful connection — reset auto-restart accounting.
                 // If the tunnel later drops with a retryable error, the
@@ -1142,6 +1164,19 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Replaces warm clients that have been held too long (see
+    /// `GateSupport.maxWarmAge`). Discard + relaunch happen in the same
+    /// main-actor turn, so a Connect never sees a gap.
+    private func refreshAgedWarmClients() {
+        guard prewarmEnabled else { return }
+        for id in processManager.warmTunnelIDs(olderThan: GateSupport.maxWarmAge) {
+            processManager.discardWarm(tunnelID: id)
+            if prewarmTunnel(id) {
+                appendSystemLog("Pre-warmed client refreshed (held longer than \(Int(GateSupport.maxWarmAge / 60)) min)", to: id)
+            }
+        }
+    }
+
     private func shouldPrewarm(_ id: UUID, duringDisconnect: Bool = false) -> Bool {
         guard prewarmEnabled, tunnelsContain(id) else { return false }
         guard deletingTunnelIDs.contains(id) == false,
@@ -1260,6 +1295,7 @@ final class AppState: ObservableObject {
     }
 
     private func runWatchdogPass() async {
+        refreshAgedWarmClients()
         let now = Date()
         let tunnelIDs = tunnels.map(\.id)
         for tunnelID in tunnelIDs {
