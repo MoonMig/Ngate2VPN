@@ -226,12 +226,15 @@ Measured on the maintainer's Mac (JaCarta token, three profiles: tunnel A = pass
 - Temp state: `~/Library/Caches/Ngate2VPN/secure-configs/*.cfg` (credentials, 0600, removed on process exit and swept at launch/quit) and `…/gates/*.gate`. Leftovers after tests or a crash are safe to delete; never delete them while a real tunnel is starting.
 - Keychain checks without touching secrets: `security find-generic-password -s NgateVPN -a vault.v1` (no `-w`/`-g`). Do not dump the Keychain.
 - `pgrep -f` can fail with "illegal byte sequence" here; use `ps -A -o pid,command | grep '[n]gateconsoleclient'`.
+- Signature of a warm client that sat at the gate too long: `Using pre-warmed client`, then within ~20 ms `Transaction timeout happened while connecting to gate` → `Unable to login to remote gate in a reasonable time` → `NGate console client stopped.` → `Connection failed with exit code: 0`. If it reappears, check that the client's config has `operationsTimeout=…` and that `refreshAgedWarmClients` is firing (`Pre-warmed client refreshed` system lines every ~10 min).
+- Timing experiments against the client (dummy URL `https://127.0.0.1:9/x/`, `sandbox-exec -f notoken.sb /usr/bin/env DYLD_INSERT_LIBRARIES=… NGATE2VPN_GATE_FILE=… client -N -vvvv --disable-proxy`): **do not set `NGATE2VPN_GATE_PARENT` from a script subshell** — it must equal the client's real parent PID, otherwise the gate `_exit(0)`s at its first 20 ms poll and the client silently vanishes. Kill experiment processes by explicit PID: `ps | grep name | xargs kill` matches your own shell command line and kills the tool call. Long waits: run the script with `run_in_background` and watch its result file rather than sleeping.
 
 ### Release workflow
 
 1. Bump `APP_VERSION` in `build-app.sh`, the README status line, and add a CHANGELOG entry (Russian, newest first).
 2. `swift test`, then `./build-app.sh` (signs with "Ngate2VPN Local Signing" if present — check the printed `designated =>` line shows `certificate leaf`, not `cdhash`).
 3. The user installs and verifies on real tunnels (`pkill -x Ngate2VPN; rm -rf /Applications/Ngate2VPN.app && cp -R build/Ngate2VPN.app /Applications/ && open /Applications/Ngate2VPN.app`) and reports back with Journal logs. **Do not commit or publish before they confirm it works.**
+3b. `build/Ngate2VPN.app` has been seen to disappear between a build and the release step; the DMG is what ships, so before publishing mount it read-only (`hdiutil attach -readonly -nobrowse -mountpoint <tmp> build/Ngate2VPN-X.Y.dmg`) and check `CFBundleShortVersionString`, `codesign --verify --deep --strict`, the `designated =>` line (`certificate leaf`), and that `Contents/Resources/libngategate.dylib` is present; then `hdiutil detach`.
 4. `git add` the specific files (never `.claude/settings.local.json`), commit, `git push origin main`, then `gh release create vX.Y build/Ngate2VPN-X.Y.dmg --target main --title vX.Y --notes …` (notes in Russian).
 - Users must install a build ≥ 3.27 to read secrets: older builds look for the per-secret Keychain items that `SecretVault` migrates away.
 
@@ -239,6 +242,7 @@ Measured on the maintainer's Mac (JaCarta token, three profiles: tunnel A = pass
 
 - Secrets live in exactly one Keychain item (`SecretVault`, account `vault.v1`); never reintroduce per-tunnel/per-secret items — each is a separate macOS access prompt.
 - Never hide `codesign` failures in `build-app.sh`, and keep the ad-hoc fallback: an unusable identity must not produce an unsigned bundle.
+- The client's login transaction dies ~120 s after session start regardless of our gate. Any change to gating/warming must keep warm clients' `operationsTimeout` (ms) raised **and** refreshed within `GateSupport.maxWarmAge`; holds longer than ~100 s without both silently break the first Connect.
 - Pre-warmed processes stay out of `TunnelProcessManager.processes` until adopted (see Pre-warming); a discarded one must still clean up its credential file.
 
 - Credentials (`pinCode`, `password`) must never reach `UserDefaults` or logs. Always call `sanitizedConfiguration` before persisting.
