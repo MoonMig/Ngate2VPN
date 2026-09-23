@@ -80,10 +80,11 @@ final class DNSApplier: ObservableObject {
     /// domain set would miss that update.
     private var writtenScopedResolvers: [String: [String]] = [:]
 
-    /// True iff we created `/etc/resolver/.` (the catch-all default override).
+    /// True iff the default resolver override is active (applied via
+    /// `networksetup`, not a file — see WRITE_DEFAULT).
     private var defaultInstalled: Bool = false
 
-    /// Exact resolver contents written to `/etc/resolver/.`, if any.
+    /// Exact DNS servers applied as the default resolver, if any.
     private var writtenDefaultResolver: [String]?
 
     /// Marker / state file. Existence implies a previous session installed
@@ -243,6 +244,7 @@ final class DNSApplier: ObservableObject {
         /bin/mkdir -p /usr/local/libexec
         /bin/mkdir -p /etc/resolver
         /bin/chmod 755 /etc/resolver
+        /usr/sbin/chown root:wheel /etc/resolver
 
         helper_tmp="$(/usr/bin/mktemp /usr/local/libexec/ngate2vpn-dns-apply.XXXXXX)"
         sudoers_tmp="$(/usr/bin/mktemp /etc/sudoers.d/ngate2vpn.XXXXXX)"
@@ -686,8 +688,8 @@ enum DNSApplierError: Error {
 ///
 ///     WRITE <domain> <ip> [<ip>…]   create /etc/resolver/<domain>
 ///     REMOVE <domain>               delete /etc/resolver/<domain>
-///     WRITE_DEFAULT <ip> [<ip>…]    create /etc/resolver/. (catch-all)
-///     REMOVE_DEFAULT                delete /etc/resolver/.
+///     WRITE_DEFAULT <ip> [<ip>…]    set default DNS via networksetup
+///     REMOVE_DEFAULT                restore DHCP DNS via networksetup
 ///     FLUSH                         dscacheutil + mDNSResponder HUP
 ///     UNINSTALL_SELF [<domain>…]    cleanup, then rm sudoers + self
 ///
@@ -727,6 +729,9 @@ flush_dns() {
 
 mkdir -p /etc/resolver
 chmod 755 /etc/resolver
+# Must be root-owned: a user-owned directory would let any process running
+# as that user plant resolver files without sudo.
+chown root:wheel /etc/resolver
 
 while IFS= read -r line; do
     read -ra tok <<< "$line"

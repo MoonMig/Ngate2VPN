@@ -180,8 +180,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             forName: NSWindow.willCloseNotification,
             object: window,
             queue: .main
-        ) { _ in
-            DispatchQueue.main.async { [weak self] in
+        ) { [weak self] _ in
+            DispatchQueue.main.async {
                 self?.mainWindowWillClose()
             }
         }
@@ -567,7 +567,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             item.toolTip = isRunning ? "Disconnect" : "Connect"
             menu.addItem(item)
         }
-        
+
+        // Connection details — one line per connected tunnel: name and the
+        // address the gateway assigned. Absent when nothing is connected.
+        let connections: [(name: String, ip: String)] = appState.tunnels.compactMap { tunnel in
+            guard let runtime = appState.runtime[tunnel.id],
+                  runtime.status == .running || runtime.status == .degraded,
+                  let ip = runtime.clientAddress, !ip.isEmpty else { return nil }
+            return (tunnel.title.isEmpty ? "Untitled" : tunnel.title, ip)
+        }
+        if !connections.isEmpty {
+            menu.addItem(.separator())
+            let header = NSMenuItem(title: "Active connections", action: nil, keyEquivalent: "")
+            header.isEnabled = false
+            menu.addItem(header)
+            for connection in connections {
+                let item = NSMenuItem()
+                item.view = ConnectionMenuItemView(name: connection.name, ip: connection.ip)
+                menu.addItem(item)
+            }
+        }
+
         menu.addItem(.separator())
         let settingsItem = NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self

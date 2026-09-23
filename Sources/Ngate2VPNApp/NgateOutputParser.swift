@@ -70,6 +70,18 @@ enum NgateOutputParser {
             normalizedLine.contains("network unreachable") {
             return .networkUnreachable
         }
+        // The client reaches the gateway through the *system* proxy. When that
+        // proxy is down or drops the CONNECT, the socket error names the proxy.
+        // Must precede the generic "connection refused" match: a refused
+        // connection to the proxy is a proxy problem, not a gateway problem.
+        if normalizedLine.contains("proxyconnectionclosederror") ||
+            normalizedLine.contains("proxy connection closed prematurely") ||
+            normalizedLine.contains("with proxy closed prematurely") ||
+            normalizedLine.contains("proxyconnectionrefusederror") ||
+            normalizedLine.contains("proxyconnectionerror") ||
+            normalizedLine.contains("proxynotfounderror") {
+            return .proxyFailure
+        }
         if normalizedLine.contains("connection refused") {
             return .connectionRefused
         }
@@ -170,5 +182,29 @@ enum NgateOutputParser {
         guard let valueIndex else { return nil }
         let value = String(parts[valueIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
         return value.isEmpty ? nil : value
+    }
+
+    // MARK: Two-factor timeout
+
+    /// A password login the gateway rejects only after this long was waiting
+    /// for a second-factor confirmation; a genuinely wrong password is
+    /// answered within a fraction of a second.
+    static let twoFactorMinSeconds: Double = 8
+
+    /// `login transaction finished in 15.048s` → 15.048 (input lowercased).
+    static func extractLoginTransactionSeconds(from normalizedLine: String) -> Double? {
+        guard let range = normalizedLine.range(of: "logintransaction finished in ") else { return nil }
+        let rest = normalizedLine[range.upperBound...]
+        let number = rest.prefix { $0.isNumber || $0 == "." }
+        return Double(number)
+    }
+
+    /// Reclassifies "invalid credentials" of a password login as a 2FA
+    /// timeout when the gateway held the request long enough.
+    static func refineCredentialsError(_ error: TunnelError, loginTransactionSeconds: Double?) -> TunnelError {
+        guard error == .invalidCredentials,
+              let seconds = loginTransactionSeconds,
+              seconds >= twoFactorMinSeconds else { return error }
+        return .twoFactorTimeout
     }
 }

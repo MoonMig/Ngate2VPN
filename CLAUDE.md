@@ -43,6 +43,8 @@ This is a macOS-only SwiftUI app (macOS 13+) built as a Swift Package (no Xcode 
 
 ### Data flow
 
+`AppState` is one class spread over several files (all members internal so the extensions can share state): `AppState.swift` (stored properties, `init`, tunnel CRUD), `AppState+Connection.swift` (connect/disconnect/Connect All, exit and state transitions), `AppState+Watchdog.swift` (wake + watchdog loop), `AppState+Prewarm.swift`, `AppState+Logging.swift` (journal ingestion, DNS parser feed), `AppState+Alerts.swift`, `AppState+Secrets.swift`. The value types (`TunnelConfiguration`, `TunnelError`, `TunnelRuntimeState`, `SystemLogLevel`, …) are in `TunnelModels.swift`. Retry/backoff/circuit-breaker decisions are pure functions in `WatchdogPolicy.swift` (unit-tested) — change limits there, not in `AppState`.
+
 ```
 AppState (@MainActor)
   ├── tunnels: [TunnelConfiguration]       ← persisted to UserDefaults via TunnelPersistence
@@ -53,7 +55,7 @@ AppState (@MainActor)
   └── DNSApplier                           ← applies policy to /etc/resolver/ via sudoers helper
 ```
 
-`AppState` is the single source of truth, always accessed on the main actor. UI reads from it via `@EnvironmentObject`. The three-tab UI (`Home`, `Journal`, `Settings`) lives entirely in `ContentView.swift`.
+`AppState` is the single source of truth, always accessed on the main actor. UI reads from it via `@EnvironmentObject`. The three-tab UI (`Home`, `Journal`, `Settings`) is split by view: `ContentView.swift` (root + titlebar tabs), `HomeView.swift` (profile list, `ProfileRow`, `RoundedToggle`), `EditSheet.swift`, `JournalView.swift`, `LogTextView.swift` (NSTextView-backed log renderer), `SettingsView.swift` (+ `DNSHelperSection`), `Components.swift` (shared controls), `DesignSystem.swift` (`DS` tokens).
 
 ### Concurrency model
 
@@ -78,7 +80,7 @@ macOS prompts per Keychain **item**, and an ad-hoc-signed app is a different app
 
 Each tunnel runs one `ngateconsoleclient` process, always launched with `-vvvv` (verbose). The verbose output is necessary: `NgateGatewayResponseParser` scans the `Debug` log lines for the JSON block containing `IPTunnels`/`DNSs`/`SearchDomains`. Without `-vvvv` this block is not printed.
 
-`AppState` contains a watchdog loop that runs every 5 s. On retryable errors it restarts the process with exponential backoff (base 5 s, cap 15 min, max 8 consecutive failures before pausing). The `TunnelError.isRetryable` property is the authoritative classification.
+`AppState` contains a watchdog loop that runs every 5 s. On retryable errors it restarts the process with exponential backoff (base 5 s, cap 15 min). The restart decision is a pure function, `WatchdogPolicy.decide` (unit-tested in `WatchdogPolicyTests`); `AppState+Watchdog.swift` only gathers its inputs and performs the side effects. Limits (all in `WatchdogPolicy`): 8 consecutive failures without Auto-reconnect, **24 with Auto-reconnect** (≈5 h awake; it used to be unlimited), and **2 attempts in total for a missed 2FA prompt** (`twoFactorMaxRetries = 1`). When a limit trips the tunnel is paused (`watchdogPaused`) with a journal line (and an alert for Auto-reconnect / 2FA); the user's Connect/toggle clears it, and a wake from sleep clears it for Auto-reconnect tunnels (not for a 2FA pause). The `TunnelError.isRetryable` property is the authoritative classification.
 
 ### DNS Helper
 
@@ -99,6 +101,10 @@ These are NOT the same and must not be conflated:
 - **Default resolver** — `WRITE_DEFAULT`/`REMOVE_DEFAULT` operate via `networksetup -setdnsservers` on every active network service. There is **no** `/etc/resolver/.` file: per `resolver(5)`, the default DNS is the system primary (resolv.conf / Network prefs), and a file literally named `.` cannot exist on HFS+/APFS (the kernel resolves `.` to the directory). An earlier implementation tried `mv tmp /etc/resolver/.` which silently produced a useless `..tmp` file — the default resolver never worked until this was rewritten. `REMOVE_DEFAULT` restores DHCP DNS via `networksetup -setdnsservers <service> "Empty"`. `uninstall()` sends `REMOVE_DEFAULT` before `UNINSTALL_SELF` when `defaultInstalled` so the user's DNS is restored on uninstall.
 
 Note: `holdDefaultDNS` defaults to `true`, which means `WRITE_DEFAULT` is only ever emitted when the user explicitly turns it off in Settings.
+
+#### `/etc/resolver` ownership
+
+The directory must be `root:wheel`: a user-owned `/etc/resolver` lets any process running as the user plant resolver files without sudo. Both the install script and the helper (`chown root:wheel /etc/resolver`) enforce it. Changing the helper source changes its hash, so the app then shows "DNS Helper code changed" until the user reinstalls it (one admin prompt) and DNS is not applied in between — call that out in release notes when touching the helper.
 
 #### runHelper timeout
 
@@ -124,9 +130,9 @@ dd.MM.yyyy HH:mm:ss.SSS [SYSTEM] Level        [TunnelName] message   ← tunnel-
 dd.MM.yyyy HH:mm:ss.SSS [SYSTEM] Level        message                ← app-wide (DNS Helper etc.)
 ```
 
-Level words are padded with spaces to 8 characters (width of `"Critical"`) so all messages align in a column in the monospaced journal font. The `SystemLogLevel` enum (`Info`, `Warning`, `Error`, `Critical`) is defined at the top of `AppState.swift` and is shared with `DNSApplier.swift` via the same module. `DNSApplier.onDiagnostic` carries `(String, SystemLogLevel)`.
+Level words are padded with spaces to 8 characters (width of `"Critical"`) so all messages align in a column in the monospaced journal font. The `SystemLogLevel` enum (`Info`, `Warning`, `Error`, `Critical`) is defined in `TunnelModels.swift` and is shared with `DNSApplier.swift` via the same module. `DNSApplier.onDiagnostic` carries `(String, SystemLogLevel)`.
 
-In the Journal renderer (`ContentView.swift / buildAttributedString`), `[SYSTEM]` lines use `nsColor(for: entry.text)` for body coloring — the same level-token detection as ngate lines. The `[SYSTEM] ` tag itself is always rendered in `systemTagColor` (orange).
+In the Journal renderer (`LogTextView.swift / buildAttributedString`), `[SYSTEM]` lines use `nsColor(for: entry.text)` for body coloring — the same level-token detection as ngate lines. The `[SYSTEM] ` tag itself is always rendered in `systemTagColor` (orange).
 
 ### Log timestamps
 
@@ -139,6 +145,8 @@ All log lines use `dd.MM.yyyy` date prefix (not `yyyy-MM-dd`). The `timestampKey
 Notable classification decisions:
 - `"vpn session destroyed"` is intentionally **not** classified — it is a finalization event that fires after both retryable and non-retryable errors, and matching it would overwrite an earlier correct classification.
 - `"unable to correctly logout from remote gate"` → `sessionRefreshFailed` (retryable): the server closed the session; watchdog reconnects silently.
+- **2FA timeout.** The gateway holds a password login ~15 s waiting for the second factor, then answers `401` — indistinguishable in text from a wrong password. `AppState+Logging` records the last `LoginTransaction finished in N s` per attempt (`lastLoginTransactionSeconds`); `NgateOutputParser.refineCredentialsError` turns `invalidCredentials` into `twoFactorTimeout` (retryable) when a password tunnel was rejected after ≥ 8 s. The refinement must be applied to *every* `invalidCredentials` line of the attempt (the client prints the error twice), otherwise the second line overwrites it and raises the "Invalid credentials" alert. `connectAndWait` does not retry `twoFactorTimeout` (`WatchdogPolicy.canRetryDuringStartup`) — the watchdog owns that budget, or the user would get extra prompts.
+- **Proxy.** The client uses the *system* HTTP(S) proxy. `ProxyConnectionClosedError` / "connection with proxy closed prematurely" → `proxyFailure` (retryable), matched before the generic "connection refused". It is ignored while a session is up (the client retries refreshes itself; marking the tunnel degraded could leave it stuck). `ProxyPreflight` (called from `connectTunnel`, fire-and-forget) sends a real `CONNECT` through the proxy that CFNetwork selects for the gateway URL and logs a warning if the proxy is down or refuses; it never blocks or fails the connect. SOCKS/PAC proxies are not probed.
 
 ### App lifecycle
 
@@ -150,17 +158,21 @@ Quit is asynchronous (`applicationShouldTerminate` returns `.terminateLater`): D
 
 The About panel reads its version from `Bundle.main.infoDictionary["CFBundleShortVersionString"]` — do NOT hardcode it. The single source of truth for the version is `APP_VERSION` in `build-app.sh` (which writes it into the generated `Info.plist`). README status line and CHANGELOG must be bumped to match.
 
-### UI conventions (ContentView.swift)
+### UI conventions (Sources/Ngate2VPNApp/*View.swift, DesignSystem.swift)
 
-The whole UI is one file. Colors come from the `DS` design-token enum (each token has a dark/light pair via `NSColor(name:dynamicProvider:)`); corner radii are `DS.r` (10) and `DS.rL` (14). The status-bar (tray) icon is managed by `StatusIconManager` — it tints a `globe` SF Symbol; the disconnected state uses `NSColor.secondaryLabelColor` (NOT a fixed white/black) so it stays visible on both light and dark menu bars. Color tiers in `updateIcon(connectedCount:totalTunnels:)`: 0 connected = grey, 1 = light blue, 2+ but not all = darker blue `(0.2, 0.4, 1.0)`, all = green. The check order matters (all-connected is tested before `>= 2`); do not darken the mid-blue further — `(0.1, 0.2, 0.8)` was unreadable on dark menu bars.
+Colors come from the `DS` design-token enum (each token has a dark/light pair via `NSColor(name:dynamicProvider:)`); corner radii are `DS.r` (10) and `DS.rL` (14). The status-bar (tray) icon is managed by `StatusIconManager` — it tints a `globe` SF Symbol; the disconnected state uses `NSColor.secondaryLabelColor` (NOT a fixed white/black) so it stays visible on both light and dark menu bars. Color tiers in `updateIcon(connectedCount:totalTunnels:)`: 0 connected = grey, 1 = light blue, 2+ but not all = darker blue `(0.2, 0.4, 1.0)`, all = green. The check order matters (all-connected is tested before `>= 2`); do not darken the mid-blue further — `(0.1, 0.2, 0.8)` was unreadable on dark menu bars.
 
 ### Persistence of settings
+
+`TunnelConfiguration` and `PersistedState` have **hand-written tolerant decoders** (`decodeIfPresent` + defaults). Never rely on synthesized `Codable` here: a new non-optional field would make old saved data undecodable and the app would start with no profiles. `TunnelPersistence.save` keeps the previous blob in `ngate2vpn.saved.state.previous` and an undecodable one in `…undecodable`, both passed through `scrubbed(_:)` so no PIN/password can be in a backup. On launch profiles are loaded *unsanitized*, `migratePersistedSecretsToKeychainIfNeeded()` moves any legacy in-JSON secrets to the Keychain and strips them, and only then does anything call `persist()` — do not reorder that in `AppState.init`.
 
 Both `binaryPath` and `hideDockOnClose` are persisted via `@Published` sinks in `AppState.init()` — not via UI-side `onChange`. Adding new persisted `@Published` properties must follow the same pattern (add `$property.sink { [weak self] _ in self?.persist() }` in `init`). Do NOT rely on `ContentView.onChange` for persistence — the window may be closed when the value changes.
 
 Plain `UserDefaults` keys (read/written via `@AppStorage` or `UserDefaults.standard`, not through `persist()`): `autoConnect`, `prewarmTunnels` (default on), `disableTokenSandbox` (escape hatch, default off), `holdDefaultDNS` (default on), `showErrorAlerts`, `appTheme`, `journalLogLevel`, `journalShowSystem`. Tunnel profiles and `binaryPath`/`hideDockOnClose` go through `TunnelPersistence`.
 
 ### Tray menu updates
+
+Between the profile list and "Settings…" an "Active connections" area lists each connected tunnel's name and IP. Rows are custom views (`ConnectionMenuItemView`): a normal `NSMenuItem` click always dismisses the menu, a click inside a custom view does not, which is what allows "copy IP, flash Copied, stay open". Consequences worth knowing: menus draw no tooltips for view items (hence the private `HintPanel`), `mouseExited` is not delivered reliably during menu tracking (hence the pointer-position watch and the shared `hoveredRow`), and such rows are not keyboard-navigable.
 
 The tray menu is rebuilt **only** in `menuWillOpen(_:)` (i.e. just before the user sees it). There is intentionally no `objectWillChange` subscription driving `rebuildMenu()` — that pattern caused 500+ rebuilds/sec at `-vvvv` log verbosity. `menuWillOpen` is sufficient because menu items are only visible when open.
 
@@ -239,6 +251,12 @@ Measured on the maintainer's Mac (JaCarta token, three profiles: tunnel A = pass
 - Users must install a build ≥ 3.27 to read secrets: older builds look for the per-secret Keychain items that `SecretVault` migrates away.
 
 ## Key invariants
+
+- Retry policy lives in `WatchdogPolicy` only (limits, backoff, 2FA budget). Do not re-introduce constants or decision logic in `AppState`.
+- `TunnelConfiguration` / `PersistedState` decoding must stay tolerant of missing keys; backups of persisted state must go through `TunnelPersistence.scrubbed`.
+- `TunnelRuntimeState.lastLoginTransactionSeconds` is reset in `connectTunnel` and is what tells a 2FA timeout from a wrong password; keep the refinement on every `invalidCredentials` line.
+- `/etc/resolver` must stay `root:wheel`.
+- Right-click menus that need coloured items use `NativeContextMenu` (SwiftUI `.contextMenu` ignores text colour); the Settings tab draws its own translucent titlebar strip (`TitlebarBackdrop` in `SettingsView.swift`) — do not move it to `ContentView`, it darkened every tab. Tab switches deliberately have no implicit animation (`ContentView`), because it flashed an empty rectangle on first display.
 
 - Secrets live in exactly one Keychain item (`SecretVault`, account `vault.v1`); never reintroduce per-tunnel/per-secret items — each is a separate macOS access prompt.
 - Never hide `codesign` failures in `build-app.sh`, and keep the ad-hoc fallback: an unusable identity must not produce an unsigned bundle.

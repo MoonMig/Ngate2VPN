@@ -15,6 +15,19 @@ struct PersistedState: Codable {
     var hideDockOnClose: Bool
     var tunnels: [TunnelConfiguration]
 
+    init(binaryPath: String, hideDockOnClose: Bool, tunnels: [TunnelConfiguration]) {
+        self.binaryPath = binaryPath
+        self.hideDockOnClose = hideDockOnClose
+        self.tunnels = tunnels
+    }
+
+    // Tolerant of missing keys, so adding a setting never discards the profiles.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        binaryPath = try c.decodeIfPresent(String.self, forKey: .binaryPath) ?? "/opt/cprongate/ngateconsoleclient"
+        hideDockOnClose = try c.decodeIfPresent(Bool.self, forKey: .hideDockOnClose) ?? false
+        tunnels = try c.decodeIfPresent([TunnelConfiguration].self, forKey: .tunnels) ?? []
+    }
 }
 
 // MARK: - TunnelPersistence
@@ -38,8 +51,32 @@ enum TunnelPersistence {
     /// to a clean state on next launch.
     private static let storageKey = "ngate2vpn.saved.state"
 
+    /// Copies of the raw stored blob, kept so a bad decode or a bad save can
+    /// never silently destroy the user's profiles.
+    private static let previousKey = "ngate2vpn.saved.state.previous"
+    private static let undecodableKey = "ngate2vpn.saved.state.undecodable"
+
     private static let encoder = JSONEncoder()
     private static let decoder = JSONDecoder()
+
+    /// Copy of `data` with every `pinCode` / `password` value blanked, so the
+    /// backup blobs can never hold a secret even if the source was a legacy
+    /// profile that still carried one. Unparseable data is dropped (empty).
+    static func scrubbed(_ data: Data) -> Data {
+        func scrub(_ value: Any) -> Any {
+            if var object = value as? [String: Any] {
+                for (key, inner) in object {
+                    object[key] = (key == "pinCode" || key == "password") ? "" : scrub(inner)
+                }
+                return object
+            }
+            if let array = value as? [Any] { return array.map(scrub) }
+            return value
+        }
+        guard let json = try? JSONSerialization.jsonObject(with: data),
+              let out = try? JSONSerialization.data(withJSONObject: scrub(json)) else { return Data() }
+        return out
+    }
 
     /// Loads the persisted state, or `nil` if there's nothing stored
     /// yet (first launch) or the stored data fails to decode (schema
@@ -47,7 +84,16 @@ enum TunnelPersistence {
     /// implementation did via `try?`).
     static func load() -> PersistedState? {
         guard let data = UserDefaults.standard.data(forKey: storageKey) else { return nil }
-        return try? decoder.decode(PersistedState.self, from: data)
+        do {
+            return try decoder.decode(PersistedState.self, from: data)
+        } catch {
+            // Keep the first undecodable blob for manual recovery; the app
+            // will start empty and overwrite the primary key on next save.
+            if UserDefaults.standard.data(forKey: undecodableKey) == nil {
+                UserDefaults.standard.set(scrubbed(data), forKey: undecodableKey)
+            }
+            return nil
+        }
     }
 
     /// Writes `state` to UserDefaults. Failures are silently ignored,
@@ -55,6 +101,9 @@ enum TunnelPersistence {
     /// schema, and UserDefaults `set` doesn't surface I/O errors.
     static func save(_ state: PersistedState) {
         guard let data = try? encoder.encode(state) else { return }
+        if let existing = UserDefaults.standard.data(forKey: storageKey), existing != data {
+            UserDefaults.standard.set(scrubbed(existing), forKey: previousKey)
+        }
         UserDefaults.standard.set(data, forKey: storageKey)
     }
 }

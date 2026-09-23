@@ -4,7 +4,7 @@
 Написан на SwiftUI, с дизайном в духе Shadowrocket и нативной эстетикой
 macOS.
 
-> **Статус:** v3.28 — production-ready
+> **Статус:** v4.00 — production-ready
 
 ---
 
@@ -240,8 +240,11 @@ Ngate2VPN.app/Contents/MacOS/Ngate2VPN
 | Файл                          | Назначение                                                |
 |-------------------------------|-----------------------------------------------------------|
 | `Ngate2VPNApp.swift`          | Жизненный цикл, AppDelegate, меню, статус-бар             |
-| `AppState.swift`              | Состояние туннелей, бизнес-логика, `@MainActor`           |
-| `ContentView.swift`           | UI: Home, Journal, Settings                               |
+| `AppState.swift` + `AppState+*.swift` | Состояние туннелей, бизнес-логика, `@MainActor` (по файлам: Connection, Watchdog, Prewarm, Logging, Alerts, Secrets) |
+| `TunnelModels.swift`          | Модели: конфигурация, ошибки, runtime-состояние           |
+| `WatchdogPolicy.swift`        | Чистые решения watchdog: backoff, лимиты, 2FA-бюджет      |
+| `ProxyPreflight.swift`        | Проверка системного прокси перед подключением             |
+| `ContentView.swift`, `HomeView.swift`, `EditSheet.swift`, `JournalView.swift`, `LogTextView.swift`, `SettingsView.swift`, `Components.swift`, `DesignSystem.swift` | UI |
 | `NgateOutputParser.swift`     | Pure парсинг stdout ngate-client (классификация ошибок)   |
 | `TunnelPersistence.swift`     | UserDefaults persistence для конфигурации профилей        |
 | `DNSPolicyController.swift`   | Агрегатор DNS политик от всех туннелей                    |

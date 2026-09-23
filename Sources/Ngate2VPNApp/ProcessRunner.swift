@@ -11,7 +11,9 @@ import Foundation
 /// prefixed with `;`. Keys understood by ngateconsoleclient (verified
 /// against its option list):
 /// `url`, `username`, `password`, `certificateSha1`,
-/// `certificateContainerPIN`, `verbose`, `journalVerbose`, `keepSession`.
+/// `certificateContainerPIN`, and `operationsTimeout` (milliseconds; only
+/// written for pre-warmed clients). Verbosity is a command-line flag (`-vvvv`),
+/// not an ini key.
 ///
 /// **Lifecycle.**
 ///   1. `create(for:)` writes the file with mode `0600` under

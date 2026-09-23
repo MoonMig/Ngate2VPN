@@ -75,7 +75,7 @@ final class DNSPolicyController: ObservableObject {
     /// `connectedAt` decides priority.
     @Published private(set) var configs: [UUID: TunnelDNSConfig] = [:]
 
-    /// Latest computed policy, ready to apply via NEDNSSettingsManager.
+    /// Latest computed policy, ready for `DNSApplier` to write out.
     @Published private(set) var policy: ResolvedDNSPolicy = .empty
 
     /// "Hold Default DNS" — when true, we never advertise a default resolver.
@@ -158,7 +158,7 @@ final class DNSPolicyController: ObservableObject {
 
         // Re-group claimed domains back into scoped resolvers, one per
         // owning tunnel. We collapse multiple matchDomains owned by the same
-        // tunnel into a single Scoped entry so NEDNSSettingsManager doesn't
+        // tunnel into a single Scoped entry so the resolver files don't
         // need to manage redundant rules.
         var scopedByTunnel: [UUID: ResolvedDNSPolicy.Scoped] = [:]
         for (domain, config) in domainOwner {
