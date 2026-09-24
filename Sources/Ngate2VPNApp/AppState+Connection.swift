@@ -175,7 +175,7 @@ extension AppState {
         runtime[id]?.isNgateReconnecting = false
 
         let exitError = runtime[id]?.lastError ?? .processExited
-        let errorMsg = exitError == .processExited ? "Connection failed with exit code: \(code)" : exitError.message
+        let errorMsg = exitError == .processExited ? "Connection failed with exit code: \(code)" : message(for: exitError, tunnelID: id)
         appendSystemLog(errorMsg, to: id, level: .error)
 
         transitionState(id: id, newState: .failed, errorMessage: errorMsg, tunnelError: exitError)
@@ -418,8 +418,18 @@ extension AppState {
         return .failed
     }
 
+    /// User-facing text for `error` on this tunnel. Only differs for a rejected
+    /// password login (see `TunnelError.passwordLoginRejectedMessage`).
+    func message(for error: TunnelError, tunnelID: UUID) -> String {
+        if error == .invalidCredentials,
+           tunnels.first(where: { $0.id == tunnelID })?.authMethod == .credentials {
+            return TunnelError.passwordLoginRejectedMessage
+        }
+        return error.message
+    }
+
     func applyConnectionError(_ error: TunnelError, to id: UUID, alertMessage: String? = nil) {
-        let message = alertMessage ?? error.message
+        let message = alertMessage ?? self.message(for: error, tunnelID: id)
 
         // Dedupe: if this tunnel already has an active error of the same kind,
         // don't fire a second alert. The ngate client often emits the same

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Publish Ngate2VPN source and a built .app archive to GitHub Releases.
+# Publish the current Ngate2VPN build (DMG) to GitHub Releases.
 #
 # Requirements:
 #   - git
@@ -15,21 +15,22 @@
 #   ./Scripts/publish_github_release.sh
 #
 # Optional overrides:
-#   VERSION=2.40 BUILD=1 REPO=moonMig/Ngate2VPN BRANCH=main ./Scripts/publish_github_release.sh
+#   VERSION=4.00 REPO=MoonMig/Ngate2VPN BRANCH=main ./Scripts/publish_github_release.sh
+#
+# VERSION defaults to APP_VERSION in build-app.sh; the release notes are the
+# newest section of CHANGELOG.md.
 
 set -euo pipefail
 
-REPO="${REPO:-moonMig/Ngate2VPN}"
+REPO="${REPO:-MoonMig/Ngate2VPN}"
 REMOTE_URL="${REMOTE_URL:-https://github.com/${REPO}.git}"
 BRANCH="${BRANCH:-main}"
-VERSION="${VERSION:-2.40}"
-BUILD="${BUILD:-1}"
+VERSION="${VERSION:-$(sed -n 's/^APP_VERSION="\(.*\)"/\1/p' build-app.sh | head -1)}"
 TAG="${TAG:-v${VERSION}}"
-RELEASE_TITLE="${RELEASE_TITLE:-Ngate2VPN ${VERSION} (${BUILD})}"
+RELEASE_TITLE="${RELEASE_TITLE:-v${VERSION}}"
 APP_NAME="Ngate2VPN"
-APP_DIR="build/${APP_NAME}.app"
 DIST_DIR="dist"
-ARCHIVE="${DIST_DIR}/${APP_NAME}-${VERSION}-${BUILD}.zip"
+ARCHIVE="build/${APP_NAME}-${VERSION}.dmg"
 RELEASE_NOTES="${DIST_DIR}/release-notes-${TAG}.md"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -87,18 +88,15 @@ fi
 echo "==> Pushing ${BRANCH} to ${REPO}..."
 git push -u origin "$BRANCH"
 
-echo "==> Building app bundle..."
+echo "==> Building app bundle and DMG..."
 ./build-app.sh release
 
-if [[ ! -d "$APP_DIR" ]]; then
-    echo "error: expected app bundle at ${APP_DIR}" >&2
+if [[ ! -f "$ARCHIVE" ]]; then
+    echo "error: expected DMG at ${ARCHIVE}" >&2
     exit 1
 fi
 
-echo "==> Creating release archive..."
 mkdir -p "$DIST_DIR"
-rm -f "$ARCHIVE"
-ditto -c -k --keepParent "$APP_DIR" "$ARCHIVE"
 
 echo "==> Preparing release notes..."
 awk '
@@ -134,4 +132,4 @@ echo ""
 echo "Done:"
 echo "  Repository: https://github.com/${REPO}"
 echo "  Release:    https://github.com/${REPO}/releases/tag/${TAG}"
-echo "  Archive:    ${ARCHIVE}"
+echo "  Asset:      ${ARCHIVE}"

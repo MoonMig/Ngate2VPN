@@ -105,6 +105,12 @@ enum TunnelError: String, Codable {
         }
     }
 
+    /// A password login the gateway turned down quickly. Its response is
+    /// identical for a wrong password, a declined 2FA prompt and a temporary
+    /// lock, so the text must not claim to know which.
+    static let passwordLoginRejectedMessage =
+        "Login rejected by the gateway. Check the password and that the second-factor prompt was approved — a declined prompt or a temporary lock looks the same."
+
     var message: String {
         switch self {
         case .invalidCredentials: return "Invalid credentials"

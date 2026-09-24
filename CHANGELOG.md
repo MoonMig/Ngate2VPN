@@ -5,6 +5,13 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 проект следует [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [Не выпущено]
+
+### Изменено
+- После пропущенного подтверждения 2FA автоповтор ждёт 20 с (раньше 5 с), чтобы успеть одобрить push от первой попытки (`WatchdogPolicy.twoFactorRetryDelay`).
+- Быстрый отказ шлюза на парольном туннеле больше не называется уверенно «Invalid credentials»: «Login rejected by the gateway. Check the password and that the second-factor prompt was approved — a declined prompt or a temporary lock looks the same.» (ответ шлюза одинаков для неверного пароля, отклонённого push и временной блокировки).
+- `Scripts/publish_github_release.sh` приведён в соответствие с текущим процессом: версия берётся из `APP_VERSION`, публикуется DMG, репозиторий `MoonMig/Ngate2VPN`.
+
 ## [4.00] — 2026-09-24
 
 ### Добавлено

@@ -17,6 +17,9 @@ enum WatchdogPolicy {
     /// Automatic restarts after a missed 2FA confirmation. Each restart sends
     /// the user a fresh prompt, so attempts in total = this + 1.
     static let twoFactorMaxRetries = 1
+    /// Pause before re-trying after a missed 2FA prompt, so the prompt the
+    /// failed attempt already sent can still be approved before the next one.
+    static let twoFactorRetryDelay: TimeInterval = 20
 
     // MARK: Restart decision
 
@@ -27,6 +30,8 @@ enum WatchdogPolicy {
         var paused: Bool
         var consecutiveFailures: Int
         var lastRestartAt: Date?
+        /// When the tunnel entered its current failed state.
+        var lastFailureAt: Date? = nil
         var now: Date
     }
 
@@ -76,6 +81,11 @@ enum WatchdogPolicy {
         // user's phone are worse than a failed tunnel.
         if i.lastError == .twoFactorTimeout, i.consecutiveFailures >= twoFactorMaxRetries {
             return .pause(.twoFactor, failures: i.consecutiveFailures)
+        }
+
+        if i.lastError == .twoFactorTimeout, let failedAt = i.lastFailureAt,
+           i.now.timeIntervalSince(failedAt) < twoFactorRetryDelay {
+            return .skip
         }
 
         let wait = backoff(afterFailures: i.consecutiveFailures)
