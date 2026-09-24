@@ -3,7 +3,9 @@ import SwiftUI
 import Combine
 import CryptoKit
 
-// Pre-warming of gated ngateconsoleclient processes (see CLAUDE.md).
+// Pre-warming of gated ngateconsoleclient processes: a client is started ahead of time and held
+// just before its first network connect() until the user presses Connect (see GateSupport.swift
+// and Support/ngategate.c).
 // Split out of AppState.swift; members are internal (not private) so the
 // extensions in the sibling files can share state.
 extension AppState {

@@ -5,3 +5,4 @@ dist/
 *.xcuserdata/
 DerivedData/
 .claude/settings.local.json
+CLAUDE.md
