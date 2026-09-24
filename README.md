@@ -377,15 +377,6 @@ URL должен включать схему: `https://vpn.example.com`.
 
 ---
 
-## Сборка production-версии
-
-Для распространения вне dev-машины без предупреждений Gatekeeper потребуется:
-
-1. Сертификат **Apple Developer ID Application** ($99 / год)
-2. `SIGN_IDENTITY="Developer ID Application: …" ./build-app.sh`
-3. Нотаризация через `notarytool`
-4. `xcrun stapler staple build/Ngate2VPN.app`
-
 ## Публикация релизов
 
 1. Поднять `APP_VERSION` в `build-app.sh`, статус в README и добавить запись в `CHANGELOG.md`
