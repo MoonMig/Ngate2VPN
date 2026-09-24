@@ -258,18 +258,18 @@ UNINSTALL_SELF example.com other.example.com
 ## Архитектура
 
 ```
-Ngate2VPN.app/Contents/MacOS/Ngate2VPN
-        │
-        ├── AppState (@MainActor)
-        │   ├── tunnels (модели)  ── TunnelPersistence (UserDefaults, без секретов)
-        │   ├── runtime (живые состояния)
-        │   ├── WatchdogPolicy (чистые решения о повторах)
-        │   ├── DNSPolicyController → DNSApplier (/etc/resolver/ через sudoers helper)
-        │   └── ProxyPreflight (проверка системного прокси)
-        │
-        ├── TunnelProcessManager / ProcessRunner (ngate-client, прогрев через libngategate)
+AppDelegate (Ngate2VPNApp.swift)
+   ├── окно + тулбар ── SwiftUI-интерфейс ── читает AppState (@EnvironmentObject)
+   ├── StatusIconManager + меню в трее (ConnectionMenuItemView)
+   └── AppState (@MainActor) ── единый источник истины
+        ├── tunnels ── TunnelPersistence (UserDefaults, без секретов)
+        ├── runtime (живые состояния туннелей)
+        ├── TunnelProcessManager → TunnelProcess (ngate-client, прогрев через libngategate)
+        ├── TokenMonitor (IOKit) / GateSupport (прогрев)
         ├── SecretVault → KeychainSecretStore (один элемент Keychain)
-        └── FileLogger (actor, асинхронные логи)
+        ├── FileLogger → LogWriterActor (actor, асинхронные логи)
+        ├── DNSPolicyController (+ NgateGatewayResponseParser) → DNSApplier (/etc/resolver/)
+        └── чистая логика без состояния: NgateOutputParser, WatchdogPolicy, ProxyPreflight
 ```
 
 ### Основные модули
