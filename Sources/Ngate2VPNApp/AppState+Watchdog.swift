@@ -137,7 +137,6 @@ extension AppState {
             paused: runtimeState.watchdogPaused,
             consecutiveFailures: runtimeState.consecutiveWatchdogFailures,
             lastRestartAt: runtimeState.lastWatchdogRestartAt,
-            lastFailureAt: runtimeState.lastStateChange,
             now: now
         ))
 

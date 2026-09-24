@@ -10,11 +10,10 @@ final class WatchdogPolicyTests: XCTestCase {
         auto: Bool = false,
         paused: Bool = false,
         failures: Int = 0,
-        lastRestart: Date? = nil,
-        lastFailure: Date? = nil
+        lastRestart: Date? = nil
     ) -> WatchdogPolicy.Inputs {
         .init(status: status, lastError: error, autoReconnect: auto, paused: paused,
-              consecutiveFailures: failures, lastRestartAt: lastRestart, lastFailureAt: lastFailure, now: now)
+              consecutiveFailures: failures, lastRestartAt: lastRestart, now: now)
     }
 
     // MARK: Backoff
@@ -105,17 +104,6 @@ final class WatchdogPolicyTests: XCTestCase {
         XCTAssertEqual(WatchdogPolicy.decide(inputs(error: .twoFactorTimeout, failures: 1)),
                        .pause(.twoFactor, failures: 1))
         XCTAssertEqual(WatchdogPolicy.twoFactorMaxRetries, 1)
-    }
-
-    func testTwoFactorRetryWaitsSoThePromptCanBeApproved() {
-        let justFailed = now.addingTimeInterval(-6)
-        XCTAssertEqual(WatchdogPolicy.decide(inputs(error: .twoFactorTimeout, lastFailure: justFailed)), .skip)
-        let waitedLongEnough = now.addingTimeInterval(-21)
-        XCTAssertEqual(WatchdogPolicy.decide(inputs(error: .twoFactorTimeout, lastFailure: waitedLongEnough)),
-                       .restart(attempt: 1, limit: 8, waited: 5))
-        // Other errors are not delayed by it.
-        XCTAssertEqual(WatchdogPolicy.decide(inputs(error: .gatewayUnreachable, lastFailure: justFailed)),
-                       .restart(attempt: 1, limit: 8, waited: 5))
     }
 
     func testTwoFactorBudgetAppliesWithAutoReconnectToo() {
