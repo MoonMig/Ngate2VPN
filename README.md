@@ -6,6 +6,19 @@
 
 > **Статус:** v4.01 — production-ready (Apple Silicon, macOS 13+)
 
+> **Неофициальный проект.** Не связан с компанией КриптоПро; «КриптоПро» и «NGate» — названия их владельцев.
+> Приложение только запускает штатный `ngateconsoleclient` и не включает его в поставку.
+
+**In English:** Ngate2VPN is an unofficial macOS app that manages several CryptoPro NGate VPN tunnels
+on top of the vendor's `ngateconsoleclient` (Apple Silicon, macOS 13+). It adds fast connect
+(pre-warmed clients), automatic reconnects, 2FA-aware retries, split-DNS, a menu-bar icon and a
+Russian/English interface. MIT-licensed; not affiliated with CryptoPro. The documentation below is in
+Russian; UI labels are quoted in English (Settings → Application → Binary, …).
+
+> Названия элементов интерфейса ниже даны по английской версии. В русском интерфейсе:
+> Home — «Главная», Journal — «Журнал», Settings — «Настройки», Application — «Приложение»,
+> Binary — «Бинарник», Interface — «Интерфейс», Language — «Язык».
+
 ---
 
 ## Возможности
@@ -37,7 +50,7 @@ Ngate2VPN прячет это время за запуском приложен�
   поднимается за секунды. Connect All с прогретыми клиентами — порядка 8–9 секунд вместо ~40.
 - **Парольные туннели** запускаются в песочнице без доступа к токену (инициализация ~0,3 с),
   поэтому им прогрев не нужен.
-- Прогретые клиенты не видны watchdog'у и статусам, пока Connect их не «усыновит»; устаревшие
+- Прогретые клиенты не видны watchdog'у и статусам, пока Connect их не подхватит; устаревшие
   (старше 10 минут) обновляются автоматически; настройка отключается в
   Settings → Application → *Pre-warm tunnels*.
 
@@ -105,8 +118,6 @@ Shadowrocket) не работает, попытки заканчивались �
 - **Тема** — System / Light / Dark
 - **Язык** — System / English / Русский
 - **DNS Helper** — установка / удаление / Hold Default DNS
-- `ngateconsoleclient` всегда запускается с `-vvvv`: DNS Helper берёт DNS-настройки шлюза из
-  verbose-вывода
 
 ### Интеграция в трей
 - Иконка в статус-баре с цветовой индикацией: серый — всё отключено, светло-синий — один туннель
@@ -193,7 +204,8 @@ open build/Ngate2VPN.app
 с содержимым вида `nameserver 10.0.0.1`; для записи в эту папку нужен root.
 
 DNS Helper:
-1. При подключении парсит DNS-настройки из ответа шлюза
+1. При подключении парсит DNS-настройки из ответа шлюза (для этого `ngateconsoleclient` всегда
+   запускается с `-vvvv`: нужный блок JSON есть только в verbose-выводе)
 2. Создаёт файлы в `/etc/resolver/`
 3. Сбрасывает кэш `dscacheutil` и `mDNSResponder`
 4. При отключении туннеля удаляет свои файлы
@@ -204,7 +216,7 @@ DNS Helper:
 не существует — стандартный резолвер macOS так не настраивается); при отключении DHCP-DNS
 восстанавливается.
 
-### Архитектура
+### Как устроен helper
 
 Без Apple Developer ID нельзя ни использовать `SMAppService.daemon` (launchd отвергает
 ad-hoc-подписанные daemon-binaries), ни `NEDNSSettings` (нужен entitlement от Apple).
@@ -251,7 +263,7 @@ UNINSTALL_SELF example.com other.example.com
 - Скрипт и каталог `/etc/resolver` принадлежат `root:wheel` (скрипт — mode `700`): обычный
   процесс пользователя не может подменить DNS без sudo
 - Входные данные валидируются дважды (Swift и bash) по whitelist regex
-- Пароли не хранятся ни в Keychain, ни на диске в рамках helper'а
+- Helper не получает и не хранит никаких паролей: он принимает только домены и адреса DNS-серверов
 
 ---
 
@@ -367,7 +379,7 @@ URL должен включать схему: `https://vpn.example.com`.
 
 ## Конфиденциальность и безопасность
 
-- **Никакой телеметрии и аналитики.** Приложение ничего никуда не отправляет.
+- **Никакой телеметрии и аналитики.** Приложение не отправляет данные никуда, кроме ваших VPN-шлюзов (подключение и проверка прокси).
 - **Все данные локальны.** Учётные данные — Keychain; логи — `~/Library/Application Support/Ngate2VPN/logs/`;
   настройки — `UserDefaults` и Application Support.
 - **Секреты не пишутся на диск** вне Keychain, кроме краткоживущего конфига клиента (`0600`),
