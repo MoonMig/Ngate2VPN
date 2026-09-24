@@ -59,6 +59,9 @@ extension TunnelConfiguration: CustomDebugStringConvertible {
 }
 
 extension TunnelState {
+    /// Localized title for the UI. `title` stays English: it is used in journal lines.
+    var localizedTitle: String { L(title) }
+
     var title: String { switch self {
         case .stopped: return "Disconnected"
         case .starting: return "Connecting"

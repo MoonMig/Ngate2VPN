@@ -17,7 +17,7 @@ CONFIG="${1:-release}"
 BUILD_DIR="$(pwd)/.build/${CONFIG}"
 APP_DIR="$(pwd)/build/Ngate2VPN.app"
 APP_BUNDLE_ID="com.ngate2vpn.app"
-APP_VERSION="4.00"
+APP_VERSION="4.01"
 APP_BUILD="1"
 
 echo "==> Building Swift package ($CONFIG)…"
@@ -69,6 +69,13 @@ cat > "$APP_DIR/Contents/Info.plist" <<EOF
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>en</string>
+        <string>ru</string>
+    </array>
     <key>CFBundleExecutable</key>
     <string>Ngate2VPN</string>
     <key>CFBundleIdentifier</key>

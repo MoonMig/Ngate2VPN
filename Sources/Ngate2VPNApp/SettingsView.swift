@@ -9,6 +9,7 @@ struct AppSettingsView: View {
     @AppStorage("prewarmTunnels")  private var prewarmTunnels  = true
     @AppStorage("appTheme")        private var appTheme        = "System"
     @AppStorage("showErrorAlerts") private var showErrorAlerts = true
+    @AppStorage(AppLanguage.storageKey) private var appLanguage = AppLanguage.system.rawValue
 
     private var binaryOK: Bool {
         FileManager.default.isExecutableFile(atPath: appState.binaryPath)
@@ -45,20 +46,21 @@ struct AppSettingsView: View {
                 FormBlock("Interface") {
                     FieldRow(label: "Theme") {
                         Picker("", selection: $appTheme) {
-                            Text("Dark").tag("Dark")
-                            Text("Light").tag("Light")
-                            Text("System").tag("System")
+                            Text(L("Dark")).tag("Dark")
+                            Text(L("Light")).tag("Light")
+                            Text(L("System")).tag("System")
                         }
-                        .pickerStyle(.segmented).frame(maxWidth: 180)
+                        .pickerStyle(.segmented).frame(maxWidth: 220)
+                    }
+                    FieldRow(label: "Language") {
+                        Picker("", selection: $appLanguage) {
+                            Text(L("System")).tag(AppLanguage.system.rawValue)
+                            Text("English").tag(AppLanguage.en.rawValue)
+                            Text("Русский").tag(AppLanguage.ru.rawValue)
+                        }
+                        .pickerStyle(.segmented).frame(maxWidth: 260)
                     }
                 }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Active tunnels are disconnected when the app closes.")
-                    Text("Secrets are stored in macOS Keychain — never logged.")
-                }
-                .font(.system(size: 11)).foregroundStyle(DS.ter)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(18)
         }
@@ -104,10 +106,10 @@ struct DNSHelperSection: View {
 
     private var statusText: String {
         switch helperState {
-        case .uninstalled:           return "Not installed"
-        case .applying:              return "Working…"
-        case .installed:             return "Active"
-        case .error(let message):    return "Error: \(message)"
+        case .uninstalled:           return L("Not installed")
+        case .applying:              return L("Working…")
+        case .installed:             return L("Active")
+        case .error(let message):    return L("Error: %@", message)
         }
     }
 

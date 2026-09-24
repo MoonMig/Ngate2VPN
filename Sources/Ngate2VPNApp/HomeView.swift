@@ -33,7 +33,7 @@ struct HomeView: View {
                         .background(DS.accentDim, in: RoundedRectangle(cornerRadius: 7))
                 }
                 .buttonStyle(.plain)
-                .help("New profile")
+                .help(L("New profile"))
             }
             .padding(.horizontal, 18)
             .frame(height: 40)
@@ -80,13 +80,13 @@ struct HomeView: View {
             EditSheet(tunnelID: w.value).environmentObject(appState)
         }
         // Delete confirmation
-        .confirmationDialog("Delete Profile?", isPresented: $showDeleteAlert, titleVisibility: .visible) {
-            Button("Delete", role: .destructive) {
+        .confirmationDialog(L("Delete Profile?"), isPresented: $showDeleteAlert, titleVisibility: .visible) {
+            Button(L("Delete"), role: .destructive) {
                 deletingID.map { appState.removeTunnel($0) }
             }
-            Button("Cancel", role: .cancel) {}
+            Button(L("Cancel"), role: .cancel) {}
         } message: {
-            Text("This action cannot be undone.")
+            Text(L("This action cannot be undone."))
         }
     }
 }
@@ -98,7 +98,7 @@ struct EmptyProfiles: View {
     var body: some View {
         VStack(spacing: 14) {
             Image(systemName: "shield.slash").font(.system(size: 36, weight: .thin)).foregroundStyle(DS.ter)
-            Text("No profiles").font(.system(size: 14, weight: .semibold)).foregroundStyle(DS.sec)
+            Text(L("No profiles")).font(.system(size: 14, weight: .semibold)).foregroundStyle(DS.sec)
             SmallButton("Add Profile", primary: true, action: onAdd)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -142,11 +142,11 @@ struct ProfileRow: View {
 
                 // Text
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(snap.configuration.title.isEmpty ? "Untitled" : snap.configuration.title)
+                    Text(snap.configuration.title.isEmpty ? L("Untitled") : snap.configuration.title)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(DS.pri)
                         .lineLimit(1)
-                    Text(snap.configuration.endpointURL.isEmpty ? st.title : snap.configuration.endpointURL)
+                    Text(snap.configuration.endpointURL.isEmpty ? st.localizedTitle : snap.configuration.endpointURL)
                         .font(.system(size: 11))
                         .foregroundStyle(DS.sec)
                         .lineLimit(1)
@@ -157,7 +157,7 @@ struct ProfileRow: View {
 
                 // Status/IP badge
                 if busy || (active && snap.runtime.clientAddress != nil) {
-                    let badgeText = busy ? st.title : (copied ? "Copied" : (snap.runtime.clientAddress ?? ""))
+                    let badgeText = busy ? st.localizedTitle : (copied ? L("Copied") : (snap.runtime.clientAddress ?? ""))
                     let badgeColor = busy ? DS.orange : DS.green
                     Text(badgeText)
                         .font(.system(size: 10, weight: .medium))
@@ -192,18 +192,18 @@ struct ProfileRow: View {
             .overlay {
                 NativeContextMenu {
                     var entries: [NativeContextMenu.Entry] = [
-                        .item(title: "Edit Profile", symbol: "pencil") { onEdit() },
+                        .item(title: L("Edit Profile"), symbol: "pencil") { onEdit() },
                         .separator,
                     ]
                     // Reorder — alternative to drag-and-drop
                     if let idx = appState.tunnels.firstIndex(where: { $0.id == tunnelID }) {
                         entries += [
-                            .item(title: "Move Up", symbol: "arrow.up", enabled: idx > 0) { moveUp(currentIndex: idx) },
-                            .item(title: "Move Down", symbol: "arrow.down", enabled: idx < appState.tunnels.count - 1) { moveDown(currentIndex: idx) },
+                            .item(title: L("Move Up"), symbol: "arrow.up", enabled: idx > 0) { moveUp(currentIndex: idx) },
+                            .item(title: L("Move Down"), symbol: "arrow.down", enabled: idx < appState.tunnels.count - 1) { moveDown(currentIndex: idx) },
                             .separator,
                         ]
                     }
-                    entries.append(.item(title: "Delete Profile", symbol: "trash", destructive: true) { onDelete() })
+                    entries.append(.item(title: L("Delete Profile"), symbol: "trash", destructive: true) { onDelete() })
                     return entries
                 }
             }

@@ -8,7 +8,7 @@ import CryptoKit
 // extensions in the sibling files can share state.
 extension AppState {
     func showAlert(title: String, message: String) {
-        showAlert(title: title, message: message, dedupKey: title + "|" + message)
+        showAlert(title: L(title), message: L(message), dedupKey: title + "|" + message)
     }
 
     /// Convenience overload — prefixes the alert title with "[Profile name]"
@@ -18,8 +18,8 @@ extension AppState {
     /// tunnel) instead of being deduped together.
     func showAlert(title: String, message: String, for tunnelID: UUID) {
         let profile = tunnelTitle(for: tunnelID)
-        let prefixed = "[\(profile)] \(title)"
-        showAlert(title: prefixed, message: message,
+        let prefixed = "[\(profile)] \(L(title))"
+        showAlert(title: prefixed, message: L(message),
                   dedupKey: "\(tunnelID.uuidString)|\(title)|\(message)")
     }
 

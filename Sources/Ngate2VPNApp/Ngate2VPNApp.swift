@@ -22,39 +22,51 @@ struct Ngate2VPNApp: App {
             EmptyView()
                 .frame(width: 1, height: 1)
         }
-        .commands {
-            // Help — replaces the auto-injected "<App> Help" item
-            // that would otherwise show "Help isn't available".
-            CommandGroup(replacing: .help) {
-                Button("Ngate2VPN Help") {
-                    AppDelegate.shared?.showHelpAlert()
-                }
-                .keyboardShortcut("?", modifiers: [.command])
+        .commands { AppCommands() }
+    }
+}
+
+/// The menu-bar commands. A separate `Commands` type (rather than an inline
+/// `.commands { }` block) so that it can observe the language setting: SwiftUI
+/// re-evaluates the body when `appLanguage` changes, and the titles switch at
+/// once instead of only after a relaunch.
+struct AppCommands: Commands {
+    @AppStorage(AppLanguage.storageKey) private var appLanguage: String = AppLanguage.system.rawValue
+
+    var body: some Commands {
+        // Reading the setting makes SwiftUI rebuild these commands when it changes.
+        let _ = appLanguage
+        // Help menu — emptied here (so no "Help isn't available" item is
+        // injected) and dropped from the menu bar by `pruneMainMenu`; the
+        // help entry lives in the app menu, next to Settings…, instead.
+        CommandGroup(replacing: .help) { }
+        // Services — replace the auto-injected Services submenu
+        // with nothing. We don't expose any NSServices, so the
+        // entry was just dead weight in the App menu. Previous
+        // attempts to strip it post-hoc from NSMenu kept losing
+        // because SwiftUI's command system rebuilds the App
+        // submenu on its own schedule, re-adding Services
+        // between our passes. Telling SwiftUI not to emit it
+        // in the first place is the only reliable fix.
+        CommandGroup(replacing: .systemServices) { }
+        // Settings — inserted right after the App-info block
+        // (About, separator). We use SwiftUI's CommandGroup
+        // rather than poking NSMenu directly because previous
+        // attempts at the AppKit level either produced a stray
+        // "NSMenuItem" entry or lost the item entirely after
+        // window-state transitions. CommandGroup is the
+        // documented API for inserting commands into the
+        // standard menu structure and gets the placement right
+        // without us having to count indices.
+        CommandGroup(after: .appInfo) {
+            Button(L("Settings…")) {
+                AppDelegate.shared?.openSettings()
             }
-            // Services — replace the auto-injected Services submenu
-            // with nothing. We don't expose any NSServices, so the
-            // entry was just dead weight in the App menu. Previous
-            // attempts to strip it post-hoc from NSMenu kept losing
-            // because SwiftUI's command system rebuilds the App
-            // submenu on its own schedule, re-adding Services
-            // between our passes. Telling SwiftUI not to emit it
-            // in the first place is the only reliable fix.
-            CommandGroup(replacing: .systemServices) { }
-            // Settings — inserted right after the App-info block
-            // (About, separator). We use SwiftUI's CommandGroup
-            // rather than poking NSMenu directly because previous
-            // attempts at the AppKit level either produced a stray
-            // "NSMenuItem" entry or lost the item entirely after
-            // window-state transitions. CommandGroup is the
-            // documented API for inserting commands into the
-            // standard menu structure and gets the placement right
-            // without us having to count indices.
-            CommandGroup(after: .appInfo) {
-                Button("Settings…") {
-                    AppDelegate.shared?.openSettings()
-                }
-                .keyboardShortcut(",", modifiers: [.command])
+            .keyboardShortcut(",", modifiers: [.command])
+            Button(L("Help")) {
+                AppDelegate.shared?.showHelpAlert()
             }
+            .keyboardShortcut("?", modifiers: [.command])
         }
     }
 }
@@ -96,6 +108,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
     }
     
+    /// Measures the toolbar's tab block and sets the window's minimum width so
+    /// the tabs always stay fully visible; widens the window if it is now too narrow.
+    private func updateMinimumWindowWidth(for window: NSWindow) {
+        window.layoutIfNeeded()
+        // Find tabBar specifically — visibleItems also includes the
+        // compensator, and we need the actual button-block width.
+        guard let tabBarItem = window.toolbar?.visibleItems?.first(where: { $0.itemIdentifier == .tabBar }),
+              let toolbarView = tabBarItem.view else { return }
+        toolbarView.layoutSubtreeIfNeeded()
+        let toolbarWidth = max(toolbarView.frame.width, toolbarView.fittingSize.width)
+        // Layout: [traffic 76][flex N][tabs][flex N][compensator 76]
+        // For min-width we ignore the compensator — toolbar simply lets
+        // it spill / clip when tight. What we MUST keep visible is tabs
+        // plus a small left/right gap.
+        let padding: CGFloat = 15
+        let computed = trafficLightsWidth + toolbarWidth + padding + 24
+        enforcedMinWindowWidth = max(computed, 320)
+        window.minSize = NSSize(width: enforcedMinWindowWidth, height: enforcedMinWindowWidth * 0.75)
+        if window.frame.width < enforcedMinWindowWidth {
+            var frame = window.frame
+            frame.size.width = enforcedMinWindowWidth
+            window.setFrame(frame, display: true, animate: false)
+        }
+    }
+
     private func createMainWindow() -> NSWindowController {
         let contentView = ContentView().environmentObject(appState)
         let hostingController = NSHostingController(rootView: contentView)
@@ -127,25 +164,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Once the toolbar has had its first layout pass, read the actual width
         // and raise enforcedMinWindowWidth to match. windowWillResize will then
         // prevent the user from making the window narrower than this value.
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            window.layoutIfNeeded()
-            // Find tabBar specifically — visibleItems also includes the
-            // compensator, and we need the actual button-block width.
-            guard let tabBarItem = window.toolbar?.visibleItems?.first(where: { $0.itemIdentifier == .tabBar }),
-                  let toolbarView = tabBarItem.view else { return }
-            toolbarView.layoutSubtreeIfNeeded()
-            let toolbarWidth = max(toolbarView.frame.width, toolbarView.fittingSize.width)
-            // Layout: [traffic 76][flex N][tabs][flex N][compensator 76]
-            // For min-width we ignore the compensator — toolbar simply lets
-            // it spill / clip when tight. What we MUST keep visible is tabs
-            // plus a small left/right gap.
-            let padding: CGFloat = 15
-            let computed = trafficLightsWidth + toolbarWidth + padding + 24
-            self.enforcedMinWindowWidth = max(computed, 320)
-            window.minSize = NSSize(width: self.enforcedMinWindowWidth, height: self.enforcedMinWindowWidth * 0.75)
+        DispatchQueue.main.async { [weak self, weak window] in
+            guard let self, let window else { return }
+            self.updateMinimumWindowWidth(for: window)
         }
-        
+
+        // Tab titles change width with the UI language ("Настройки" vs "Settings"),
+        // so the minimum has to be measured again after a language switch.
+        NotificationCenter.default.addObserver(forName: .appLanguageChanged, object: nil, queue: .main) { [weak self, weak window] _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                guard let self, let window else { return }
+                self.updateMinimumWindowWidth(for: window)
+            }
+        }
+
         // Restore the window frame from the last session.
         if let frameData = UserDefaults.standard.data(forKey: windowFrameKey),
            let frame = try? NSKeyedUnarchiver.unarchivedObject(ofClass: NSValue.self, from: frameData)?.rectValue {
@@ -210,6 +242,76 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return false
     }
 
+    // MARK: Main menu bar pruning
+
+    /// Titles of the standard menus we drop, in the languages the app ships.
+    /// SwiftUI fills a menu's items lazily (on first open), so right after launch
+    /// a menu can still be empty and cannot be recognised by its contents; the
+    /// title is the fallback for exactly that case.
+    private static let removedMenuTitles: Set<String> = ["Edit", "Правка", "View", "Вид", "Window", "Окно", "Help", "Справка"]
+
+    /// Removes the Edit, View, Window and Help menus from the menu bar (the help
+    /// entry lives in the app menu; see the `.commands` block). Menus are
+    /// recognised by contents where possible (titles are localized) and by title
+    /// while still empty; the prune re-runs whenever SwiftUI rebuilds the menu.
+    func pruneMainMenu() {
+        guard let menu = NSApp.mainMenu else { return }
+        let toggleToolbar = NSSelectorFromString("toggleToolbarShown:")
+        for item in menu.items.reversed() where item !== menu.items.first {
+            guard let submenu = item.submenu else { continue }
+            let title = submenu.title.isEmpty ? item.title : submenu.title
+            let actions = Set(submenu.items.compactMap { $0.action })
+            let isEdit = actions.contains(#selector(NSText.copy(_:)))
+            let isView = actions.contains(toggleToolbar) || actions.contains(#selector(NSWindow.toggleFullScreen(_:)))
+            let isWindow = submenu === NSApp.windowsMenu
+            let isHelp = submenu === NSApp.helpMenu
+            if isEdit || isView || isWindow || isHelp || Self.removedMenuTitles.contains(title) {
+                menu.removeItem(item)
+            }
+        }
+    }
+
+    private var editShortcutMonitor: Any?
+
+    /// The Edit menu is what makes Cmd+C / V / X / A / Z work in text fields.
+    /// With the menu gone, send those actions down the responder chain
+    /// ourselves. Uses key codes so it works on non-Latin keyboard layouts.
+    private func installEditShortcutFallback() {
+        editShortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
+
+            guard flags == [.command] || flags == [.command, .shift] else { return event }
+            let action: Selector?
+            switch (event.keyCode, flags.contains(.shift)) {
+            case (8, false):  action = #selector(NSText.copy(_:))
+            case (9, false):  action = #selector(NSText.paste(_:))
+            case (7, false):  action = #selector(NSText.cut(_:))
+            case (0, false):  action = #selector(NSText.selectAll(_:))
+            case (6, false):  action = NSSelectorFromString("undo:")
+            case (6, true):   action = NSSelectorFromString("redo:")
+            default:          action = nil
+            }
+            guard let action, NSApp.sendAction(action, to: nil, from: nil) else { return event }
+            return nil
+        }
+    }
+
+    private func startPruningMainMenu() {
+        installEditShortcutFallback()
+        for name in [NSApplication.didBecomeActiveNotification, NSWindow.didBecomeKeyNotification] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                DispatchQueue.main.async { self?.pruneMainMenu() }
+            }
+        }
+        // Any menu gaining an item (SwiftUI rebuilding the main menu, the tray menu
+        // being rebuilt) re-runs the prune; it is cheap and idempotent, and removing
+        // an item posts a different notification, so this cannot loop.
+        NotificationCenter.default.addObserver(forName: NSMenu.didAddItemNotification, object: nil, queue: .main) { [weak self] _ in
+            DispatchQueue.main.async { self?.pruneMainMenu() }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.pruneMainMenu() }
+    }
+
     private func mainWindowWillClose() {
         guard appState.hideDockOnClose else { return }
         NSApp.setActivationPolicy(.accessory)
@@ -228,6 +330,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         mainWindowController = createMainWindow()
+        startPruningMainMenu()
         setupStatusBar()
         setupAlertObserver()
 
@@ -341,35 +444,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// in the App body; that's the only reliable way to override the
     /// auto-injected "App Help" item that produces "Help isn't
     /// available" on systems without a help book.
-    func showHelpAlert() {
+    @objc func showHelpAlert() {
         let alert = NSAlert()
         alert.messageText = "Ngate2VPN"
-        alert.informativeText = """
-        VPN-клиент для управления несколькими туннелями Ngate.
-
-        Вкладки
-        • Главная — управление туннелями: подключение, отключение, \
-        редактирование профилей.
-        • Журнал — поток событий в реальном времени с фильтрами \
-        Errors / System.
-        • Настройки — путь к бинарнику ngate, DNS Helper, тема \
-        оформления, поведение приложения.
-
-        DNS Helper
-        Устанавливается один раз через Настройки → DNS Helper. После \
-        этого split-DNS применяется автоматически и без запроса \
-        пароля при каждом подключении / отключении туннеля.
-
-        Логи на диске
-        ~/Library/Application Support/Ngate2VPN/logs/
-
-        Безопасность
-        Учётные данные хранятся только в Keychain macOS и в \
-        per-process конфигах в \
-        ~/Library/Caches/Ngate2VPN/secure-configs/ \
-        (права 0600, удаляются при выходе из приложения). За пределы \
-        машины ничего не уходит, кроме самого VPN-трафика.
-        """
+        alert.informativeText = L("help.body")
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
         alert.runModal()
@@ -529,7 +607,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let menu = menu else { return }
         menu.removeAllItems()
         
-        let openItem = NSMenuItem(title: "Open Ngate VPN", action: #selector(openMainWindowToHome), keyEquivalent: "o")
+        let openItem = NSMenuItem(title: L("Open Ngate VPN"), action: #selector(openMainWindowToHome), keyEquivalent: "o")
         openItem.target = self
         menu.addItem(openItem)
         menu.addItem(.separator())
@@ -543,14 +621,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // "Connect All" — скрываем только если ВСЕ туннели уже подключены
         if connectedCount < totalCount {
-            let connectAllItem = NSMenuItem(title: "Connect All", action: #selector(connectAll), keyEquivalent: "")
+            let connectAllItem = NSMenuItem(title: L("Connect All"), action: #selector(connectAll), keyEquivalent: "")
             connectAllItem.target = self
             menu.addItem(connectAllItem)
         }
 
         // "Disconnect All" — скрываем только если НИ ОДИН туннель не подключён
         if connectedCount > 0 {
-            let disconnectAllItem = NSMenuItem(title: "Disconnect All", action: #selector(disconnectAll), keyEquivalent: "")
+            let disconnectAllItem = NSMenuItem(title: L("Disconnect All"), action: #selector(disconnectAll), keyEquivalent: "")
             disconnectAllItem.target = self
             menu.addItem(disconnectAllItem)
         }
@@ -560,7 +638,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         for tunnel in appState.tunnels {
             guard let snapshot = appState.snapshot(for: tunnel.id) else { continue }
             let isRunning = snapshot.runtime.status == .running || snapshot.runtime.status == .degraded || snapshot.runtime.status == .starting || snapshot.runtime.status == .stopping
-            let title = "\(snapshot.configuration.title) (\(snapshot.runtime.status.title))"
+            let title = "\(snapshot.configuration.title) (\(snapshot.runtime.status.localizedTitle))"
             let item = NSMenuItem(title: title, action: #selector(toggleTunnel(_:)), keyEquivalent: "")
             item.representedObject = tunnel.id
             item.target = self
@@ -578,7 +656,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         if !connections.isEmpty {
             menu.addItem(.separator())
-            let header = NSMenuItem(title: "Active connections", action: nil, keyEquivalent: "")
+            let header = NSMenuItem(title: L("Active connections"), action: nil, keyEquivalent: "")
             header.isEnabled = false
             menu.addItem(header)
             for connection in connections {
@@ -589,11 +667,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         menu.addItem(.separator())
-        let settingsItem = NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ",")
+        let settingsItem = NSMenuItem(title: L("Settings..."), action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
+        let helpItem = NSMenuItem(title: L("Help"), action: #selector(showHelpAlert), keyEquivalent: "")
+        helpItem.target = self
+        menu.addItem(helpItem)
         menu.addItem(.separator())
-        let quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: L("Quit"), action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
     }
@@ -657,11 +738,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
 extension AppDelegate: NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
-        // Only used by the tray (status bar) menu — rebuild the
+
+        // Otherwise this is the tray (status bar) menu — rebuild the
         // item list based on current tunnel state so the dropdown
-        // reflects what's connected. The App submenu in the menu
-        // bar is owned by SwiftUI's `.commands { ... }` block and
-        // we don't attach as its delegate.
+        // reflects what's connected. The menu-bar menus are owned by
+        // SwiftUI's `.commands { ... }` block and we don't attach to them.
         rebuildMenu()
     }
 }

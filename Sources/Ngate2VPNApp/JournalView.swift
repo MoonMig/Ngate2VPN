@@ -177,16 +177,16 @@ struct JournalView: View {
             HStack(alignment: .center, spacing: 8) {
                 // Profile filter — styled to match the Home header
                 Menu {
-                    Button("All tunnels") { selectedTunnelID = nil }
+                    Button(L("All tunnels")) { selectedTunnelID = nil }
                     Divider()
                     ForEach(appState.tunnels) { t in
-                        Button(t.title.isEmpty ? "Untitled" : t.title) { selectedTunnelID = t.id }
+                        Button(t.title.isEmpty ? L("Untitled") : t.title) { selectedTunnelID = t.id }
                     }
                 } label: {
                     HStack(spacing: 4) {
                         Text(selectedTunnelID.flatMap { id in
                             appState.tunnels.first(where: { $0.id == id })?.title
-                        } ?? "All tunnels")
+                        } ?? L("All tunnels"))
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(DS.pri)
                         Image(systemName: "chevron.down")
@@ -207,11 +207,11 @@ struct JournalView: View {
                 // Log level — dropdown menu, persisted across launches
                 Menu {
                     ForEach(LogLevel.allCases) { lvl in
-                        Button(lvl.rawValue) { logLevelRaw = lvl.rawValue }
+                        Button(L(lvl.rawValue)) { logLevelRaw = lvl.rawValue }
                     }
                 } label: {
                     HStack(spacing: 4) {
-                        Text(logLevel.rawValue)
+                        Text(L(logLevel.rawValue))
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(DS.sec)
                         Image(systemName: "chevron.down")
@@ -237,7 +237,7 @@ struct JournalView: View {
                     pb.clearContents()
                     pb.setString(allText, forType: .string)
                 } label: {
-                    Label("Copy", systemImage: "doc.on.doc")
+                    Label(L("Copy"), systemImage: "doc.on.doc")
                         .font(.system(size: 11))
                         .foregroundStyle(DS.sec)
                         .lineLimit(1)
@@ -245,7 +245,7 @@ struct JournalView: View {
                 }
                 .buttonStyle(.plain)
                 .fixedSize(horizontal: true, vertical: false)
-                .help("Copy all visible entries")
+                .help(L("Copy all visible entries"))
                 .disabled(entries.isEmpty)
 
                 // Clear logs
@@ -257,7 +257,7 @@ struct JournalView: View {
                         appState.clearSystemLog()
                     }
                 } label: {
-                    Label("Clear", systemImage: "trash")
+                    Label(L("Clear"), systemImage: "trash")
                         .font(.system(size: 11))
                         .foregroundStyle(DS.sec)
                         .lineLimit(1)
@@ -277,7 +277,7 @@ struct JournalView: View {
                     Image(systemName: "text.alignleft")
                         .font(.system(size: 28, weight: .thin))
                         .foregroundStyle(DS.ter)
-                    Text("No events")
+                    Text(L("No events"))
                         .font(.system(size: 12))
                         .foregroundStyle(DS.ter)
                 }

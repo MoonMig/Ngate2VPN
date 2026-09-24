@@ -22,7 +22,7 @@ final class ConnectionMenuItemView: NSView {
     /// reliably while a menu is tracking, so entering a row explicitly clears
     /// the previous one instead of relying on it.
     private static weak var hoveredRow: ConnectionMenuItemView?
-    private static let hintText = "Click to copy the IP address"
+    private static var hintText: String { L("Click to copy the IP address") }
 
     private var highlighted = false {
         didSet {
@@ -66,7 +66,7 @@ final class ConnectionMenuItemView: NSView {
 
     /// The IP column is as wide as the IP or the "Copied" label, whichever is larger.
     private var ipColumnWidth: CGFloat {
-        let copied = NSAttributedString(string: "Copied", attributes: [.font: ipField.font as Any]).size().width
+        let copied = NSAttributedString(string: L("Copied"), attributes: [.font: ipField.font as Any]).size().width
         return max(Self.textWidth(ipField), ceil(copied) + 6)
     }
 
@@ -100,7 +100,7 @@ final class ConnectionMenuItemView: NSView {
     }
 
     private func updateAppearance() {
-        ipField.stringValue = showsCopied ? "Copied" : ip
+        ipField.stringValue = showsCopied ? L("Copied") : ip
         if highlighted {
             nameField.textColor = .selectedMenuItemTextColor
             ipField.textColor = .selectedMenuItemTextColor

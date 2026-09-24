@@ -4,10 +4,12 @@ import AppKit
 // MARK: - Tab
 
 enum AppTab: String, CaseIterable, Identifiable {
-    case home     = "Главная"
-    case journal  = "Журнал"
-    case settings = "Настройки"
+    case home     = "Home"
+    case journal  = "Journal"
+    case settings = "Settings"
     var id: String { rawValue }
+    /// Localized tab title (the raw value is the English key).
+    var title: String { L(rawValue) }
     var icon: String {
         switch self {
         case .home:     return "shield.fill"
@@ -22,6 +24,7 @@ enum AppTab: String, CaseIterable, Identifiable {
 struct ContentView: View {
     @EnvironmentObject private var appState: AppState
     @AppStorage("appTheme") private var appTheme: String = "System"
+    @AppStorage(AppLanguage.storageKey) private var appLanguage: String = AppLanguage.system.rawValue
 
     var body: some View {
         Group {
@@ -31,6 +34,10 @@ struct ContentView: View {
             case .settings: AppSettingsView()
             }
         }
+        // A new identity per language rebuilds the whole tab tree, so every
+        // `L(...)` is re-evaluated (SwiftUI would otherwise skip children whose
+        // inputs did not change).
+        .id(appLanguage)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(DS.bg)
         // No implicit animation on tab switches: the incoming tab is laid out from
@@ -63,6 +70,7 @@ struct ContentView: View {
 
 struct TitlebarTabView: View {
     @EnvironmentObject private var appState: AppState
+    @AppStorage(AppLanguage.storageKey) private var appLanguage: String = AppLanguage.system.rawValue
 
     var body: some View {
         HStack(spacing: 2) {
@@ -74,7 +82,17 @@ struct TitlebarTabView: View {
         }
         .fixedSize()
         .padding(.horizontal, 6)
+        .id(appLanguage)
+        .onChange(of: appLanguage) { _ in
+            // Tab titles change width with the language; let the window
+            // recompute its minimum width once the toolbar has re-laid out.
+            NotificationCenter.default.post(name: .appLanguageChanged, object: nil)
+        }
     }
+}
+
+extension Notification.Name {
+    static let appLanguageChanged = Notification.Name("ngate2vpn.appLanguageChanged")
 }
 
 struct TitleTabButton: View {
@@ -98,7 +116,7 @@ struct TitleTabButton: View {
             HStack(spacing: 5) {
                 Image(systemName: tab.icon)
                     .font(.system(size: 11, weight: .medium))
-                Text(tab.rawValue)
+                Text(tab.title)
                     .font(.system(size: 12, weight: selected ? .semibold : .regular))
             }
             .foregroundStyle(selected ? DS.pri : (hovered ? DS.sec.opacity(0.8) : DS.sec))

@@ -22,6 +22,8 @@ swift test
 swift test --filter NgateOutputParserTests
 swift test --filter DNSPolicyControllerTests
 swift test --filter SecretVaultTests
+swift test --filter WatchdogPolicyTests
+swift test --filter LocalizationTests
 swift test --filter WarmProcessTests   # runs the real client against 127.0.0.1:9; skipped without /opt/cprongate/ngateconsoleclient or clang
 
 # One-time: create the local code-signing identity that build-app.sh then uses
@@ -157,6 +159,19 @@ The app uses a SwiftUI `@main` entry with `@NSApplicationDelegateAdaptor`. The r
 Quit is asynchronous (`applicationShouldTerminate` returns `.terminateLater`): DNS routes are wiped, tunnels terminated, credential temp files cleaned, then `NSApp.reply(toApplicationShouldTerminate: true)`. A 3 s watchdog forces the reply if cleanup stalls.
 
 The About panel reads its version from `Bundle.main.infoDictionary["CFBundleShortVersionString"]` — do NOT hardcode it. The single source of truth for the version is `APP_VERSION` in `build-app.sh` (which writes it into the generated `Info.plist`). README status line and CHANGELOG must be bumped to match.
+
+### Localization (English / Russian)
+
+`Localization.swift` is a small in-app layer, not `.strings`/`.lproj` (the app is assembled by `build-app.sh`, not Xcode, and SwiftUI's own lookup cannot be forced at runtime for AppKit strings anyway). `AppLanguage` (`system` / `en` / `ru`, stored in `UserDefaults` key `appLanguage`) resolves to an effective language; `L("English text", args…)` returns the Russian text from `Localization.russian` when Russian is effective. **Keys are the English strings**, so anything not in the table (profile names, IPs, dynamic messages) passes through unchanged; format keys use `%@` / `%d`; long texts use identifier keys (`help.body`) with English in `Localization.english`.
+- Shared components localize their own labels (`FormBlock`, `FieldRow`, `ToggleRow`, `Pill`, `SheetTextButton`, `SmallButton` call `L(...)` internally), so call sites keep passing plain English literals. Everything else — `Text`, `TextField` placeholders, `.help`, `Label`, `Button`, `NSMenuItem`, `NSAlert`, context-menu entries — needs an explicit `L(...)`.
+- `TunnelError.message` and `TunnelState.title` stay **English on purpose** (they feed journal lines); the UI uses `localizedTitle` for states, and `showAlert` runs `L()` on title and message, so exact-match error texts are translated at display time. Alerts with dynamic values use a format key (`L("… %d …", n)`).
+- **Not translated by design:** `[SYSTEM]` journal lines and ngate-client output — they are diagnostics, are written to files, and this document and the release notes refer to their exact wording.
+- Switching language in Settings rebuilds the view tree (`.id(appLanguage)` in `ContentView` and `TitlebarTabView`), re-measures the toolbar (`.appLanguageChanged` → `updateMinimumWindowWidth`, because "Настройки" is wider than "Settings"), and the tray menu re-reads it the next time it opens. The app-menu commands live in `AppCommands`, a `Commands` type that reads `appLanguage`, so they switch immediately; only macOS's own menu items (About, Hide, Quit…) follow the system language and change on relaunch. `Info.plist` declares `CFBundleLocalizations = en, ru` so system-provided menu items follow the system language.
+- Adding a string: put the English literal through `L(...)` (or a shared component) and add the Russian text to `Localization.russian`; `LocalizationTests` checks format-specifier parity and that every `TunnelError` / `TunnelState` has a translation.
+
+### Menu bar pruning
+
+The app's menu bar has no Edit, View or Window menus: `AppDelegate.pruneMainMenu()` removes them (found by what they contain — `copy:`, `toggleToolbarShown:` / `toggleFullScreen:`, `NSApp.windowsMenu` — never by title, which is localized) and re-runs whenever the app activates, a window becomes key, or any menu gains an item, because SwiftUI rebuilds its menus on its own schedule. SwiftUI fills a menu's items lazily (on first open), so right after launch a menu is still empty and cannot be recognised by contents — `removedMenuTitles` (EN/RU) is the fallback for that case; **Help** is removed from the menu bar like the others (`CommandGroup(replacing: .help) { }` plus pruning), and the help entry ("Help" / "Помощь", Cmd+?) sits in the app menu next to Settings… (and in the tray menu above Quit). Do not try to make the Help *menu* open the help panel directly — three attempts failed: turning it into a plain item (a top-level item without a submenu is not drawn), hiding its items (the system Help search field cannot be hidden and stayed on screen), and replacing it with our own menu that cancels tracking in `menuWillOpen` (menus opened by themselves and froze the window). Removing Edit also removes what makes Cmd+C/V/X/A/Z work in text fields, so `installEditShortcutFallback()` keeps a local key monitor that sends `copy:`/`paste:`/`cut:`/`selectAll:`/`undo:`/`redo:` down the responder chain, matching on **key codes** (works on Russian and other non-Latin layouts). Do not drop the monitor without restoring the Edit menu. `FieldRow`'s label column is wider in Russian (84 pt vs 58) — Russian words wrapped their last letter otherwise.
 
 ### UI conventions (Sources/Ngate2VPNApp/*View.swift, DesignSystem.swift)
 

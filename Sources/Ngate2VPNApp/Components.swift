@@ -11,7 +11,7 @@ struct FormBlock<Content: View>: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(title.uppercased())
+            Text(L(title).uppercased())
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(DS.sec)
                 .padding(.horizontal, 2).padding(.bottom, 5)
@@ -28,10 +28,13 @@ struct FieldRow<Content: View>: View {
     @ViewBuilder let content: () -> Content
     var body: some View {
         HStack(spacing: 10) {
-            Text(label)
+            Text(L(label))
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(DS.sec)
-                .frame(width: 58, alignment: .trailing)
+                .lineLimit(1)
+                // Russian labels ("Название", "Бинарник") are wider than the
+                // English ones; a too-narrow column wrapped their last letter.
+                .frame(width: AppLanguage.effective == .ru ? 84 : 58, alignment: .trailing)
             content().frame(maxWidth: .infinity)
         }
         .padding(.horizontal, 14).padding(.vertical, 11)
@@ -48,7 +51,7 @@ struct ToggleRow: View {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(DS.accent).frame(width: 18)
-            Text(label)
+            Text(L(label))
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(DS.pri)
             Spacer()
@@ -66,7 +69,7 @@ struct Pill: View {
     }
     var body: some View {
         Button(action: action) {
-            Text(title)
+            Text(L(title))
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(active ? DS.accent : DS.sec)
                 .padding(.horizontal, 10).padding(.vertical, 4)
@@ -99,7 +102,7 @@ struct SheetTextButton: View {
     }
 
     var body: some View {
-        Text(label)
+        Text(L(label))
             .font(.system(size: 13, weight: bold ? .semibold : .regular))
             .foregroundStyle(enabled ? color.opacity(hovered ? 0.7 : 1.0) : color.opacity(0.4))
             .padding(.horizontal, 8)
@@ -150,7 +153,7 @@ struct SmallButton: View {
 
     var body: some View {
         Button(action: action) {
-            Text(label)
+            Text(L(label))
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(textColor)
                 .padding(.horizontal, 10).padding(.vertical, 5)

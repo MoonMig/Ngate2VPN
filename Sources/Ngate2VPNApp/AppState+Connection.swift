@@ -15,7 +15,7 @@ extension AppState {
         guard v.isEmpty else { appendSystemLog("Error: \(v.joined(separator: ", "))", to: id, level: .error); transitionState(id: id, newState: .failed); return }
         let url = URL(fileURLWithPath: binaryPath)
         guard FileManager.default.isExecutableFile(atPath: url.path) else {
-            let msg = "VPN client binary not found at:\n\(binaryPath)\n\nUpdate the path in Settings → Application → Binary."
+            let msg = L("VPN client binary not found at:\n%@\n\nUpdate the path in Settings → Application → Binary.", binaryPath)
             appendSystemLog("Binary not found", to: id, level: .error)
             transitionState(id: id, newState: .failed)
             showAlert(title: "Binary Not Found", message: msg, for: id)
@@ -185,7 +185,9 @@ extension AppState {
         // из потока вывода, повторно не показываем.
         let alreadyAlerted = exitError != .processExited
         if !exitError.isRetryable && !alreadyAlerted {
-            showAlert(title: "Connection Error", message: errorMsg, for: id)
+            showAlert(title: "Connection Error",
+                      message: exitError == .processExited ? L("Connection failed with exit code: %d", Int(code)) : errorMsg,
+                      for: id)
         }
     }
     

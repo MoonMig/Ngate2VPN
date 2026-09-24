@@ -27,7 +27,7 @@ struct EditSheet: View {
             HStack {
                 SheetTextButton("Cancel", color: DS.red) { dismiss() }
                 Spacer()
-                Text("Edit Profile").font(.system(size: 14, weight: .semibold)).foregroundStyle(DS.pri)
+                Text(L("Edit Profile")).font(.system(size: 14, weight: .semibold)).foregroundStyle(DS.pri)
                 Spacer()
                 SheetTextButton("Save",
                                 color: hasChanges ? DS.accent : DS.ter,
@@ -44,7 +44,7 @@ struct EditSheet: View {
             ScrollView {
                 VStack(spacing: 14) {
                     FormBlock("Profile") {
-                        FieldRow(label: "Name")  { TextField("Profile name", text: $draft.title).plain() }
+                        FieldRow(label: "Name")  { TextField(L("Profile name"), text: $draft.title).plain() }
                         FieldRow(label: "URL")   { TextField("https://…",    text: $draft.endpointURL).plain() }
                     }
                     FormBlock("Connection") {
@@ -53,18 +53,18 @@ struct EditSheet: View {
                     FormBlock("Auth") {
                         FieldRow(label: "Method") {
                             Picker("", selection: $draft.authMethod) {
-                                ForEach(TunnelAuthMethod.allCases) { m in Text(m.title).tag(m) }
+                                ForEach(TunnelAuthMethod.allCases) { m in Text(L(m.title)).tag(m) }
                             }.pickerStyle(.segmented)
                         }
                         if draft.authMethod == .certificate {
-                            FieldRow(label: "SHA1") { TextField("Fingerprint", text: $draft.serialNumber).plain() }
-                            FieldRow(label: "PIN")  { SecureField("Leave blank to keep", text: $draft.pinCode).plain() }
+                            FieldRow(label: "SHA1") { TextField(L("Fingerprint"), text: $draft.serialNumber).plain() }
+                            FieldRow(label: "PIN")  { SecureField(L("Leave blank to keep"), text: $draft.pinCode).plain() }
                         } else {
-                            FieldRow(label: "Login")    { TextField("Username", text: $draft.username).plain() }
-                            FieldRow(label: "Password") { SecureField("Leave blank to keep", text: $draft.password).plain() }
+                            FieldRow(label: "Login")    { TextField(L("Username"), text: $draft.username).plain() }
+                            FieldRow(label: "Password") { SecureField(L("Leave blank to keep"), text: $draft.password).plain() }
                         }
                     }
-                    Text("Secrets are stored in macOS Keychain and never logged.")
+                    Text(L("Secrets are stored in macOS Keychain and never logged."))
                         .font(.system(size: 11)).foregroundStyle(DS.ter)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }

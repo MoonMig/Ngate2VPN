@@ -169,7 +169,7 @@ extension AppState {
             if autoReconnect {
                 showAlert(
                     title: "Auto-reconnect Paused",
-                    message: "The tunnel could not be re-established after \(count) attempts. Check the network or proxy, then toggle it to try again.",
+                    message: L("The tunnel could not be re-established after %d attempts. Check the network or proxy, then toggle it to try again.", count),
                     for: id
                 )
             }
