@@ -21,6 +21,48 @@ Russian; UI labels are quoted in English (Settings → Application → Binary, �
 
 ---
 
+## Скриншоты
+
+Все скриншоты сделаны на демонстрационных данных (профили и адреса вымышленные).
+
+**Главная** — тёмная и светлая темы
+
+<p>
+  <img src="docs/screenshots/home-en-dark.png" width="49%" alt="Главная, тёмная тема">
+  <img src="docs/screenshots/home-en-light.png" width="49%" alt="Главная, светлая тема">
+</p>
+
+**Журнал** — единый поток событий всех туннелей
+
+<p>
+  <img src="docs/screenshots/journal-en-dark.png" width="80%" alt="Журнал">
+</p>
+
+**Настройки** — английский и русский интерфейс
+
+<p>
+  <img src="docs/screenshots/settings-en-dark.png" width="32%" alt="Настройки, тёмная тема">
+  <img src="docs/screenshots/settings-en-light.png" width="32%" alt="Настройки, светлая тема">
+  <img src="docs/screenshots/settings-ru-dark.png" width="32%" alt="Настройки, русский интерфейс">
+</p>
+
+**Русский интерфейс, редактор профиля и меню в трее**
+
+<p>
+  <img src="docs/screenshots/home-ru-dark.png" width="40%" alt="Главная, русский интерфейс">
+  <img src="docs/screenshots/edit-profile-en-dark.png" width="30%" alt="Редактор профиля">
+</p>
+<p>
+  <img src="docs/screenshots/tray-en-dark.png" width="30%" alt="Меню в трее, тёмная тема">
+  <img src="docs/screenshots/tray-en-light.png" width="30%" alt="Меню в трее, светлая тема">
+  <img src="docs/screenshots/tray-ru-dark.png" width="30%" alt="Меню в трее, русский интерфейс">
+</p>
+
+> Меню в трее показано макетом, собранным из настоящего меню приложения; в системе оно выглядит
+> как обычное меню macOS.
+
+---
+
 ## Возможности
 
 ### Несколько профилей в одном окне
