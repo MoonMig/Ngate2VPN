@@ -239,7 +239,7 @@ Startup timeout: `connectAllTimeout` is 120 s (certificate tunnels with a Jacart
 
 ### Performance floor and rejected approaches
 
-Measured on the maintainer's Mac (JaCarta token, three profiles: tunnel A = password, tunnel B and tunnel C = certificate). Connect All with warm clients: tunnel A ~2.6 s, tunnel B/tunnel C ~8 s after the click, ~8.6 s total (was ~43 s). The remaining time is the token: certificate tunnels each need a container pick (~3 s) and a TLS-handshake signature (~1.7 s) on the token, and the token serves them one at a time. Do not re-propose:
+Measured on the maintainer's Mac (JaCarta token, three profiles: one password login, two certificate). Connect All with warm clients: the password tunnel ~2.6 s, the certificate tunnels ~8 s after the click, ~8.6 s total (was ~43 s). The remaining time is the token: certificate tunnels each need a container pick (~3 s) and a TLS-handshake signature (~1.7 s) on the token, and the token serves them one at a time. Do not re-propose:
 
 - token/certificate "caching" — the client has no input for preloaded certificates, its store lives in process memory, and the private key stays on the token anyway;
 - a `csptest` warmup (removed; no effect), CryptoPro reader reconfiguration (`cpconfig` — ruled out by the user), decompiling/patching the client;

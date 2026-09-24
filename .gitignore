@@ -4,3 +4,4 @@ build/
 dist/
 *.xcuserdata/
 DerivedData/
+.claude/settings.local.json
