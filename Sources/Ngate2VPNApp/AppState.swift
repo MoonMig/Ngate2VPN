@@ -49,6 +49,16 @@ final class AppState: ObservableObject {
     var disconnectRequested = Set<UUID>()
     /// When a pre-warmed client was handed to each tunnel; used to spot a warm client that the gateway/client rejects right away.
     var warmAdoptedAt: [UUID: Date] = [:]
+    /// Consecutive *unintentional* warm-client deaths for a tunnel since it last pre-warmed
+    /// successfully (or since the counter was last reset — see `AppState+Prewarm.swift`).
+    /// Without this, a warm client that dies for any reason other than aging out never comes
+    /// back until an unrelated event (token re-insert, wake, profile edit, Disconnect) happens
+    /// to re-arm it — which can leave a tunnel cold for hours after the app has been running
+    /// quietly with the token inserted the whole time.
+    var warmExitFailures: [UUID: Int] = [:]
+    /// Cap on automatic re-arming after unintentional warm deaths, so a tunnel that can never
+    /// stay warm (e.g. token/reader stuck) doesn't hammer the token forever.
+    let maxWarmExitRetries = 5
     var cancellables = Set<AnyCancellable>()
     var connectAllTask: Task<Void, Never>?
     var activeStartupTunnelIDs = Set<UUID>()
@@ -228,6 +238,7 @@ final class AppState: ObservableObject {
             tunnels[idx] = Self.sanitizedConfiguration(configuration)
             persist()
             processManager.discardWarm(tunnelID: configuration.id)
+            warmExitFailures[configuration.id] = 0
             schedulePrewarm(only: [configuration.id], delay: 2)
         }
     }

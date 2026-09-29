@@ -42,7 +42,9 @@ extension AppState {
             }
         }
         appendBulkSystemLog("System woke from sleep — running watchdog pass")
-        // Warm clients hold token/CSP state from before the sleep; rebuild them.
+        // Warm clients hold token/CSP state from before the sleep; rebuild them. Past failure
+        // counts don't apply to the post-wake attempt either.
+        warmExitFailures.removeAll()
         processManager.discardAllWarm()
         schedulePrewarm(delay: 8)
         Task { [weak self] in

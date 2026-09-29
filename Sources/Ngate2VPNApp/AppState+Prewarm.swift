@@ -52,6 +52,11 @@ extension AppState {
             for tunnel in tunnels where tunnel.authMethod == .certificate {
                 processManager.discardWarm(tunnelID: tunnel.id)
             }
+        } else {
+            // A freshly (re)inserted token is a clean slate — past failures don't apply to it.
+            for tunnel in tunnels where tunnel.authMethod == .certificate {
+                warmExitFailures[tunnel.id] = 0
+            }
         }
         // With auto-connect the tunnels are about to be started anyway.
         if isInitial && UserDefaults.standard.bool(forKey: "autoConnect") && !tunnels.isEmpty { return }
@@ -136,7 +141,10 @@ extension AppState {
                 onExit: { [weak self] code, intentional in
                     Task { @MainActor in self?.handleWarmExit(id, code: code, intentional: intentional) }
                 })
-            if started { appendSystemLog("Client pre-warmed — Connect will be fast", to: id) }
+            if started {
+                warmExitFailures[id] = 0
+                appendSystemLog("Client pre-warmed — Connect will be fast", to: id)
+            }
             return started
         } catch {
             appendSystemLog("Pre-warm failed: \(error.localizedDescription)", to: id, level: .warning)
@@ -147,6 +155,21 @@ extension AppState {
     func handleWarmExit(_ id: UUID, code: Int32, intentional: Bool) {
         guard !intentional, tunnelsContain(id), deletingTunnelIDs.contains(id) == false else { return }
         appendSystemLog("Pre-warmed client exited (code \(code)); Connect will start a fresh one", to: id, level: .warning)
+
+        // Re-arm — an unintentional death otherwise leaves this tunnel cold until an unrelated
+        // event (token re-insert, wake, profile edit, Disconnect) happens to trigger schedulePrewarm
+        // again, which with the token already inserted and nothing else changing could be hours.
+        let failures = (warmExitFailures[id] ?? 0) + 1
+        warmExitFailures[id] = failures
+        guard failures <= maxWarmExitRetries else {
+            appendSystemLog(
+                "Pre-warm gave up after \(failures) failed attempts in a row; will retry on the next token/profile/wake event.",
+                to: id, level: .warning
+            )
+            return
+        }
+        // Small delay so a client that dies instantly on launch doesn't hammer the token in a tight loop.
+        schedulePrewarm(only: [id], delay: 5)
     }
 
     /// Identifies the exact settings a warm client was built from, so a
