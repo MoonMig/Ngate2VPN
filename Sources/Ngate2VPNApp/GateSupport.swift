@@ -58,6 +58,63 @@ enum GateSupport {
     }
 }
 
+/// Pure decision logic behind `TokenMonitor`'s "ignore a brief disappearance"
+/// debounce, split out so it can be unit-tested without IOKit or real timers.
+/// This type owns no timer: the caller schedules the actual delay and reports
+/// back what the raw presence was when it fired.
+struct TokenPresenceDebouncer: Equatable {
+    private(set) var hasReportedInitial = false
+    private(set) var lastReported: Bool?
+    /// True while a "removed" report is waiting on a scheduled re-check.
+    private(set) var removalPending = false
+
+    enum Action: Equatable {
+        /// Tell the caller the presence actually changed.
+        case report(Bool)
+        /// Schedule a re-check after the debounce delay and call
+        /// `removalCheckFired` with the presence observed then.
+        case scheduleRemovalCheck
+        case none
+    }
+
+    /// Called with the raw, just-observed presence (IOKit's current count > 0).
+    mutating func observe(present: Bool) -> Action {
+        if present {
+            // Any sign of presence cancels a pending removal check — this is
+            // what swallows a remove-then-reinsert blip before it is ever
+            // reported: the stale check later fires into `removalCheckFired`
+            // with `removalPending` already false.
+            removalPending = false
+            return reportIfChanged(true)
+        }
+        guard hasReportedInitial else {
+            // Reported once immediately after start, present or not — unlike
+            // later transitions, there is no prior state a blip could be
+            // mistaken for.
+            return reportIfChanged(false)
+        }
+        guard lastReported != false else { return .none }   // already reported absent
+        removalPending = true
+        return .scheduleRemovalCheck
+    }
+
+    /// Called when a scheduled removal check fires, with the raw presence
+    /// re-observed at that moment (it may have flipped back already, or have
+    /// gone through another blip since).
+    mutating func removalCheckFired(presentNow: Bool) -> Action {
+        defer { removalPending = false }
+        guard removalPending, !presentNow else { return .none }
+        return reportIfChanged(false)
+    }
+
+    private mutating func reportIfChanged(_ present: Bool) -> Action {
+        hasReportedInitial = true
+        guard lastReported != present else { return .none }
+        lastReported = present
+        return .report(present)
+    }
+}
+
 /// Reports whether a smartcard token/reader (USB CCID interface, class 0x0B)
 /// is plugged in, and calls back on the main queue when that changes.
 /// Always calls back once shortly after `start` with the initial state.
@@ -66,8 +123,17 @@ final class TokenMonitor: @unchecked Sendable {
     private var addedIterator: io_iterator_t = 0
     private var removedIterator: io_iterator_t = 0
     private var count = 0
-    private var lastPresent: Bool?
+    private var debouncer = TokenPresenceDebouncer()
+    private var pendingRemovalCheck: DispatchWorkItem?
     private var onChange: (@Sendable (Bool) -> Void)?
+
+    /// A reader that disappears for less than this and comes back on its own
+    /// (seen in the field: USB power-management blips, re-enumeration around
+    /// display sleep/wake on some hubs/docks) is treated as if nothing
+    /// happened. Without this, every such blip tore down and rebuilt every
+    /// certificate tunnel's pre-warmed client (~12 s of token reads each),
+    /// often dozens of times a day with the token never actually having left.
+    private let removalDebounce: TimeInterval = 2.0
 
     func start(onChange: @escaping @Sendable (Bool) -> Void) {
         self.onChange = onChange
@@ -106,10 +172,21 @@ final class TokenMonitor: @unchecked Sendable {
             IOObjectRelease(service)
             count = max(0, count + delta)
         }
-        let present = count > 0
-        if lastPresent != present {
-            lastPresent = present
+        switch debouncer.observe(present: count > 0) {
+        case .report(let present):
             onChange?(present)
+        case .scheduleRemovalCheck:
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                if case .report(let present) = self.debouncer.removalCheckFired(presentNow: self.count > 0) {
+                    self.onChange?(present)
+                }
+            }
+            pendingRemovalCheck?.cancel()
+            pendingRemovalCheck = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + removalDebounce, execute: work)
+        case .none:
+            break
         }
     }
 }
