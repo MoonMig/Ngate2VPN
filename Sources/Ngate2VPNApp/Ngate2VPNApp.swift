@@ -59,6 +59,9 @@ struct AppCommands: Commands {
         // standard menu structure and gets the placement right
         // without us having to count indices.
         CommandGroup(after: .appInfo) {
+            Button(L("Check for Updates…")) {
+                AppDelegate.shared?.checkForUpdatesFromMenu()
+            }
             Button(L("Settings…")) {
                 AppDelegate.shared?.openSettings()
             }
@@ -451,6 +454,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
         alert.runModal()
+    }
+
+    /// App menu → "Check for Updates…". Runs the same `checkForUpdates(manual:)`
+    /// the Settings button uses, then — unlike the Settings status row, which
+    /// just sits there until the tab is reopened — always surfaces the result
+    /// immediately, since whoever clicked this menu item may not have Settings
+    /// open at all.
+    @objc func checkForUpdatesFromMenu() {
+        Task { @MainActor in
+            await appState.checkForUpdates(manual: true)
+            NSApp.activate(ignoringOtherApps: true)
+            let alert = NSAlert()
+            switch appState.updateCheckStatus {
+            case .upToDate:
+                alert.alertStyle = .informational
+                alert.messageText = L("No Updates")
+                alert.informativeText = L("You are using the latest version.")
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+            case .available(let version, let url):
+                alert.alertStyle = .informational
+                alert.messageText = L("Update Available")
+                alert.informativeText = L("Version %@ is available.", version)
+                alert.addButton(withTitle: L("View"))
+                alert.addButton(withTitle: "OK")
+                if alert.runModal() == .alertFirstButtonReturn {
+                    NSWorkspace.shared.open(url)
+                }
+            case .failed(let message):
+                alert.alertStyle = .warning
+                alert.messageText = L("Update Check Failed")
+                alert.informativeText = message
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+            case .idle, .checking:
+                break
+            }
+        }
     }
 
     /// Quit handshake. Several pieces of cleanup must finish before we let

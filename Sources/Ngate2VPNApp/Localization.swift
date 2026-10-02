@@ -190,6 +190,7 @@ enum Localization {
         "Settings…": "Настройки…",
         "Quit": "Выйти",
         "Help": "Помощь",
+        "Check for Updates…": "Проверить обновления…",
         "Click to copy the IP address": "Нажмите, чтобы скопировать IP-адрес",
 
         // Alerts: titles
@@ -201,6 +202,11 @@ enum Localization {
         "Keychain Error": "Ошибка Keychain",
         "Two-Factor Timeout": "Таймаут двухфакторного подтверждения",
         "Auto-reconnect Paused": "Автопереподключение приостановлено",
+        "No Updates": "Обновлений нет",
+        "You are using the latest version.": "Установлена последняя версия.",
+        "Update Available": "Доступно обновление",
+        "Version %@ is available.": "Доступна версия %@.",
+        "Update Check Failed": "Не удалось проверить обновления",
 
         // Alerts: messages
         "Failed to stop tunnel before deletion": "Не удалось остановить туннель перед удалением",

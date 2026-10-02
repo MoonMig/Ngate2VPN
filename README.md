@@ -4,7 +4,7 @@
 Написан на SwiftUI, работает поверх штатного `ngateconsoleclient`, с дизайном
 в духе Shadowrocket и нативной эстетикой macOS.
 
-> **Статус:** v4.04 — production-ready (Apple Silicon, macOS 13+)
+> **Статус:** v4.05 — production-ready (Apple Silicon, macOS 13+)
 
 > **Неофициальный проект.** Не связан с компанией КриптоПро; «КриптоПро» и «NGate» — названия их владельцев.
 > Приложение только запускает штатный `ngateconsoleclient` и не включает его в поставку.
