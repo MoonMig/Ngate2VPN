@@ -72,7 +72,13 @@ enum AppUpdateInstaller {
     private static func mount(_ dmgPath: URL) throws -> URL {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
-        process.arguments = ["attach", "-nobrowse", "-plist", "-quiet", dmgPath.path]
+        // No `-quiet` here: combined with `-plist` it suppresses the plist
+        // output entirely (confirmed empirically — hdiutil then exits 0 with
+        // zero bytes on stdout), which is exactly the mount point info this
+        // function exists to read. `-plist` mode is already the non-verbose,
+        // machine-readable form, so `-quiet` was redundant even before this
+        // was found to be actively harmful.
+        process.arguments = ["attach", "-nobrowse", "-plist", dmgPath.path]
         let outPipe = Pipe()
         process.standardOutput = outPipe
         do {
@@ -85,10 +91,21 @@ enum AppUpdateInstaller {
         guard process.terminationStatus == 0 else {
             throw InstallError.mountFailed("hdiutil exited with status \(process.terminationStatus)")
         }
-        guard let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any],
+        guard let mountPoint = parseMountPoint(from: data) else {
+            throw InstallError.mountFailed("could not parse hdiutil output")
+        }
+        return mountPoint
+    }
+
+    /// Pure: extracts the mount point from `hdiutil attach -plist`'s stdout.
+    /// Separated out so the parsing itself — the thing that actually broke
+    /// once, when an extra `-quiet` flag silently zeroed out this output —
+    /// is unit-testable without shelling out to real hdiutil.
+    static func parseMountPoint(from plistData: Data) -> URL? {
+        guard let plist = try? PropertyListSerialization.propertyList(from: plistData, options: [], format: nil) as? [String: Any],
               let entities = plist["system-entities"] as? [[String: Any]],
               let mountPoint = entities.compactMap({ $0["mount-point"] as? String }).first else {
-            throw InstallError.mountFailed("could not parse hdiutil output")
+            return nil
         }
         return URL(fileURLWithPath: mountPoint)
     }
