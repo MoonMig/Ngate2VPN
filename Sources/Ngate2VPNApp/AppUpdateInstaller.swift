@@ -63,6 +63,21 @@ enum AppUpdateInstaller {
             throw InstallError.replaceFailed(error.localizedDescription)
         }
 
+        // The downloaded DMG is deliberately quarantined (see
+        // AppUpdateChecker.markAsQuarantinedDownload) so a user who opens it
+        // directly still gets Gatekeeper's normal "downloaded from the
+        // internet" prompt. That quarantine attribute carries over through
+        // the copy into /Applications, though, and would otherwise make
+        // *this* launch fail with "Apple could not verify..." immediately
+        // after a clean install — something that's already been through a
+        // real file-based Gatekeeper style check (it wouldn't be here).
+        // We already did a strictly narrower and stronger check just above
+        // (signed by this exact app's own certificate, not merely "signed by
+        // someone"), so clearing quarantine here is sound: Gatekeeper's
+        // broader "unidentified developer" question has already been
+        // answered more specifically.
+        clearQuarantine(runningAppURL)
+
         let config = NSWorkspace.OpenConfiguration()
         config.createsNewApplicationInstance = true
         _ = try await NSWorkspace.shared.openApplication(at: runningAppURL, configuration: config)
@@ -114,6 +129,17 @@ enum AppUpdateInstaller {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
         process.arguments = ["detach", mountPoint.path, "-quiet"]
+        try? process.run()
+        process.waitUntilExit()
+    }
+
+    /// Recursively removes `com.apple.quarantine` from the installed app.
+    /// `-r` matters: `FileManager.copyItem`/`replaceItemAt` can propagate the
+    /// attribute onto nested files, not just the top-level `.app` directory.
+    private static func clearQuarantine(_ path: URL) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
+        process.arguments = ["-dr", "com.apple.quarantine", path.path]
         try? process.run()
         process.waitUntilExit()
     }
