@@ -473,14 +473,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 alert.informativeText = L("You are using the latest version.")
                 alert.addButton(withTitle: "OK")
                 alert.runModal()
-            case .available(let version, let url):
+            case .available(let version, _, _):
                 alert.alertStyle = .informational
                 alert.messageText = L("Update Available")
                 alert.informativeText = L("Version %@ is available.", version)
-                alert.addButton(withTitle: L("View"))
+                alert.addButton(withTitle: L("Download"))
                 alert.addButton(withTitle: "OK")
                 if alert.runModal() == .alertFirstButtonReturn {
-                    NSWorkspace.shared.open(url)
+                    await appState.downloadAndRevealLatestRelease()
                 }
             case .failed(let message):
                 alert.alertStyle = .warning
@@ -488,7 +488,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 alert.informativeText = message
                 alert.addButton(withTitle: "OK")
                 alert.runModal()
-            case .idle, .checking:
+            case .idle, .checking, .downloading:
                 break
             }
         }

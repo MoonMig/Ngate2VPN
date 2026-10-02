@@ -180,7 +180,9 @@ enum Localization {
         "Update available: %@": "Доступно обновление: %@",
         "Check for Updates": "Проверить обновления",
         "Checking…": "Проверка…",
-        "View": "Открыть",
+        "Download": "Скачать",
+        "Downloading…": "Загрузка…",
+        "Downloading %@…": "Загрузка %@…",
         "Automatically check for updates": "Автоматически проверять обновления",
 
         // Tray menu / app menu

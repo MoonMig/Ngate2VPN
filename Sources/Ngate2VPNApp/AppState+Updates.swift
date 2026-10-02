@@ -47,9 +47,9 @@ extension AppState {
             switch AppUpdateChecker.availability(for: release, currentVersion: currentVersion) {
             case .upToDate:
                 updateCheckStatus = .upToDate(checkedAt: Date())
-            case .available(let version, let url):
-                let wasAlreadyKnown = updateCheckStatus == .available(version: version, url: url)
-                updateCheckStatus = .available(version: version, url: url)
+            case .available(let version, let releaseURL, let downloadURL):
+                let wasAlreadyKnown = updateCheckStatus.availableVersion == version
+                updateCheckStatus = .available(version: version, releaseURL: releaseURL, downloadURL: downloadURL)
                 if !wasAlreadyKnown {
                     appendBulkSystemLog("Update available: \(version)")
                 }
@@ -63,8 +63,30 @@ extension AppState {
         }
     }
 
-    func openLatestReleasePage() {
-        guard case .available(_, let url) = updateCheckStatus else { return }
-        NSWorkspace.shared.open(url)
+    /// Downloads the release's DMG into `~/Downloads` and reveals it in
+    /// Finder — the same end state as downloading it by hand from the
+    /// release page, just started from the in-app prompt. Falls back to
+    /// simply opening the release page if it has no DMG asset to download
+    /// (should not happen with this project's release workflow, but a future
+    /// release without one must not dead-end the button).
+    func downloadAndRevealLatestRelease() async {
+        guard case .available(let version, let releaseURL, let downloadURL) = updateCheckStatus else { return }
+        guard let downloadURL else {
+            NSWorkspace.shared.open(releaseURL)
+            return
+        }
+        updateCheckStatus = .downloading(version: version)
+        do {
+            let destination = try await AppUpdateChecker.downloadAsset(
+                from: downloadURL, suggestedName: downloadURL.lastPathComponent
+            )
+            appendBulkSystemLog("Update downloaded: \(destination.lastPathComponent)")
+            NSWorkspace.shared.activateFileViewerSelecting([destination])
+        } catch {
+            let message = String(describing: error as? AppUpdateChecker.CheckError ?? .network(error.localizedDescription))
+            appendBulkSystemLog("Update download failed: \(message)", level: .warning)
+            showAlert(title: "Download Failed", message: message)
+        }
+        updateCheckStatus = .available(version: version, releaseURL: releaseURL, downloadURL: downloadURL)
     }
 }
