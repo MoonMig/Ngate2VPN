@@ -225,6 +225,8 @@ enum Localization {
             "Время подтверждения второго фактора истекло. Шлюз ждёт всего ~15 с — подтверждайте вход в приложении сразу после запроса.",
         "The system proxy is not passing traffic to the gateway. Check the proxy app (or add the gateway to its bypass list).":
             "Системный прокси не пропускает трафик до шлюза. Проверьте приложение-прокси (или добавьте шлюз в его исключения).",
+        "Could not read the certificate from the token — retrying, in case the reader just blinked.":
+            "Не удалось прочитать сертификат с токена — повтор, возможно ридер на мгновение моргнул.",
         "Tunnel process exited unexpectedly": "Процесс туннеля неожиданно завершился",
         "Tunnel failed to start": "Не удалось запустить туннель",
         "Unknown tunnel error": "Неизвестная ошибка туннеля",

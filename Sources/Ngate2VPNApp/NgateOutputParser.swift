@@ -207,4 +207,24 @@ enum NgateOutputParser {
               seconds >= twoFactorMinSeconds else { return error }
         return .twoFactorTimeout
     }
+
+    // MARK: Certificate read blip
+
+    /// Reclassifies "no certificate found" as a transient read blip when the
+    /// token is known to be present and this is (one of) the tunnel's leading
+    /// failures since it last connected — in the field the token's USB
+    /// visibility can drop for well under a second and come back on its own
+    /// (the same thing `TokenPresenceDebouncer` filters out for pre-warming),
+    /// and a cold client's one-shot certificate read can land exactly in that
+    /// window. `consecutiveFailures` and `maxBlipRetries` bound this to a
+    /// single quiet retry: a genuinely missing/wrong certificate fails again
+    /// immediately and is reported as `.certificateNotFound` as before, not
+    /// retried forever. Kept here (not in `WatchdogPolicy`) because the
+    /// decision is about *what the error means*, not about restart timing.
+    static func refineCertificateNotFoundError(
+        _ error: TunnelError, tokenPresent: Bool, consecutiveFailures: Int, maxBlipRetries: Int
+    ) -> TunnelError {
+        guard error == .certificateNotFound, tokenPresent, consecutiveFailures < maxBlipRetries else { return error }
+        return .certificateReadBlip
+    }
 }

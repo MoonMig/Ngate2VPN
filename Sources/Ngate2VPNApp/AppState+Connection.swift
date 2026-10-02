@@ -264,6 +264,16 @@ extension AppState {
         if newState == .running && stateChanged {
             dnsApplier.reapplyCurrentPolicy()
         }
+
+        // A tunnel that just failed — for any reason, retryable or not — is
+        // worth pre-warming in the background: whether it is the watchdog's
+        // own upcoming retry or the user eventually noticing and reconnecting
+        // by hand, that next attempt should not *also* pay the full cold-start
+        // cost on top of whatever just went wrong. `schedulePrewarm` is a
+        // no-op if a warm client already exists or the tunnel doesn't need one.
+        if newState == .failed && stateChanged {
+            schedulePrewarm(only: [id])
+        }
     }
 
     func canStartTunnel(_ id: UUID) -> Bool {

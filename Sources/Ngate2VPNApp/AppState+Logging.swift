@@ -179,10 +179,19 @@ extension AppState {
             }
 
             guard var classifiedError = NgateOutputParser.classifyError(from: normalized) else { continue }
-            if tunnels.first(where: { $0.id == id })?.authMethod == .credentials {
+            switch tunnels.first(where: { $0.id == id })?.authMethod {
+            case .credentials:
                 classifiedError = NgateOutputParser.refineCredentialsError(
                     classifiedError, loginTransactionSeconds: runtime[id]?.lastLoginTransactionSeconds
                 )
+            case .certificate:
+                classifiedError = NgateOutputParser.refineCertificateNotFoundError(
+                    classifiedError, tokenPresent: tokenPresent,
+                    consecutiveFailures: runtime[id]?.consecutiveWatchdogFailures ?? 0,
+                    maxBlipRetries: WatchdogPolicy.certificateBlipMaxRetries
+                )
+            case nil:
+                break
             }
             let isRuntimeIssue = runtime[id]?.hasEstablishedConnection == true
 

@@ -58,7 +58,7 @@ final class LocalizationTests: XCTestCase {
         let errors: [TunnelError] = [
             .invalidCredentials, .certificateNotFound, .invalidCertificateHash, .serverCertificateNameMismatch,
             .networkUnreachable, .connectionRefused, .gatewayUnreachable, .invalidEndpoint, .sessionRefreshFailed,
-            .startupTimeout, .twoFactorTimeout, .proxyFailure, .processExited, .launchFailed, .unknown,
+            .startupTimeout, .twoFactorTimeout, .proxyFailure, .certificateReadBlip, .processExited, .launchFailed, .unknown,
         ]
         for error in errors {
             XCTAssertNotEqual(L(error.message), error.message, "no translation for \(error)")

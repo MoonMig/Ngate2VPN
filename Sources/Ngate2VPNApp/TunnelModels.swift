@@ -92,6 +92,14 @@ enum TunnelError: String, Codable {
     case startupTimeout
     case twoFactorTimeout
     case proxyFailure
+    /// A certificate-auth tunnel's cold client found no certificate on the
+    /// token for a *first* failure while the token is known to be present —
+    /// almost always the same brief USB/reader visibility blip `TokenMonitor`
+    /// already debounces for pre-warming, just landing during a live
+    /// certificate read instead. One quiet automatic retry; a second
+    /// consecutive failure falls back to the permanent `.certificateNotFound`
+    /// (see `NgateOutputParser.refineCertificateNotFoundError`).
+    case certificateReadBlip
     case processExited
     case launchFailed
     case unknown
@@ -99,7 +107,7 @@ enum TunnelError: String, Codable {
     var isRetryable: Bool {
         switch self {
         case .networkUnreachable, .connectionRefused, .gatewayUnreachable, .startupTimeout, .sessionRefreshFailed,
-             .twoFactorTimeout, .proxyFailure:
+             .twoFactorTimeout, .proxyFailure, .certificateReadBlip:
             return true
         case .invalidCredentials, .certificateNotFound, .invalidCertificateHash,
              .serverCertificateNameMismatch, .processExited, .launchFailed,
@@ -131,6 +139,8 @@ enum TunnelError: String, Codable {
             return "Two-factor confirmation timed out. The gateway waits only ~15 s — approve the login in your authenticator app as soon as the request arrives."
         case .proxyFailure:
             return "The system proxy is not passing traffic to the gateway. Check the proxy app (or add the gateway to its bypass list)."
+        case .certificateReadBlip:
+            return "Could not read the certificate from the token — retrying, in case the reader just blinked."
         case .processExited: return "Tunnel process exited unexpectedly"
         case .launchFailed: return "Tunnel failed to start"
         case .unknown: return "Unknown tunnel error"

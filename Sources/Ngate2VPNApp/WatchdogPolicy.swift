@@ -17,6 +17,13 @@ enum WatchdogPolicy {
     /// Automatic restarts after a missed 2FA confirmation. Each restart sends
     /// the user a fresh prompt, so attempts in total = this + 1.
     static let twoFactorMaxRetries = 1
+    /// How many of a tunnel's *leading* consecutive failures may still be
+    /// reclassified from `certificateNotFound` to the retryable
+    /// `certificateReadBlip` (see `NgateOutputParser.refineCertificateNotFoundError`).
+    /// Kept at 1 (one quiet retry) for the same reason as the 2FA cap: a
+    /// genuine missing/wrong certificate reproduces immediately, so there is
+    /// no point giving it more chances once it has already failed once.
+    static let certificateBlipMaxRetries = 1
 
     // MARK: Restart decision
 

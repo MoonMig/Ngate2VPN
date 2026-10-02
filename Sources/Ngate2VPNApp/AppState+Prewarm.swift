@@ -104,9 +104,24 @@ extension AppState {
             guard disconnectRequested.contains(id) else { return false }
         } else {
             guard disconnectRequested.contains(id) == false,
-                  activeStartupTunnelIDs.contains(id) == false,
-                  runtime[id]?.status == .stopped,
-                  processManager.state(for: id) == nil else { return false }
+                  activeStartupTunnelIDs.contains(id) == false else { return false }
+            switch runtime[id]?.status {
+            case .stopped:
+                guard processManager.state(for: id) == nil else { return false }
+            case .failed:
+                // A tunnel that just failed is worth pre-warming too — otherwise
+                // whatever caused the failure (a real config problem, or just a
+                // watchdog retry still a few seconds away) leaves the *next*
+                // Connect cold as well, on top of whatever just went wrong.
+                // `applyConnectionError` marks the tunnel failed before it tells
+                // the old process to stop, so it may still be `.stopping` here —
+                // the same overlap Disconnect already relies on; `TunnelProcessManager.prewarm`
+                // itself tolerates a `.stopping` predecessor.
+                guard processManager.state(for: id) == nil || processManager.state(for: id) == .stopping
+                else { return false }
+            default:
+                return false
+            }
         }
         guard let tunnel = tunnels.first(where: { $0.id == id }) else { return false }
         guard needsToken(tunnel) else { return false }

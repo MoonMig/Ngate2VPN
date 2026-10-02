@@ -89,4 +89,37 @@ final class NgateOutputParserTests: XCTestCase {
         // A plain refused connection is still just that.
         XCTAssertEqual(NgateOutputParser.classifyError(from: "critical socket error occurred qabstractsocket::connectionrefusederror (connection refused) while connecting"), .connectionRefused)
     }
+
+    func testFirstCertificateNotFoundWithTokenPresentIsABlipAndRetryable() {
+        let refined = NgateOutputParser.refineCertificateNotFoundError(
+            .certificateNotFound, tokenPresent: true, consecutiveFailures: 0, maxBlipRetries: 1
+        )
+        XCTAssertEqual(refined, .certificateReadBlip)
+        XCTAssertTrue(refined.isRetryable)
+    }
+
+    func testCertificateNotFoundWithoutATokenIsNeverReclassified() {
+        // No token at all means this is a real "nothing to authenticate with",
+        // not a blip — must stay the permanent, non-retryable classification.
+        let refined = NgateOutputParser.refineCertificateNotFoundError(
+            .certificateNotFound, tokenPresent: false, consecutiveFailures: 0, maxBlipRetries: 1
+        )
+        XCTAssertEqual(refined, .certificateNotFound)
+    }
+
+    func testCertificateNotFoundIsOnlyReclassifiedOnceInARow() {
+        // Second consecutive failure (after the one free retry) — a genuinely
+        // missing/wrong certificate reproduces immediately, so no more blips.
+        let refined = NgateOutputParser.refineCertificateNotFoundError(
+            .certificateNotFound, tokenPresent: true, consecutiveFailures: 1, maxBlipRetries: 1
+        )
+        XCTAssertEqual(refined, .certificateNotFound)
+    }
+
+    func testCertificateNotFoundReclassificationDoesNotTouchOtherErrors() {
+        XCTAssertEqual(
+            NgateOutputParser.refineCertificateNotFoundError(.invalidCertificateHash, tokenPresent: true, consecutiveFailures: 0, maxBlipRetries: 1),
+            .invalidCertificateHash
+        )
+    }
 }
