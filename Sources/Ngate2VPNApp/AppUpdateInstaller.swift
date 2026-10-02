@@ -30,9 +30,8 @@ enum AppUpdateInstaller {
     /// download on provenance alone — this is the one thing standing between
     /// a compromised GitHub release and this app silently replacing itself
     /// with whatever showed up there), replaces the running bundle with it,
-    /// launches the new copy, and asks AppKit to terminate the current
-    /// process through its normal quit handshake (`applicationShouldTerminate`),
-    /// so tunnels and DNS routes are torn down cleanly instead of killed.
+    /// and launches the new copy. Does **not** quit this process itself —
+    /// see `AppState.installUpdateAndRelaunch()`, the only caller, for why.
     /// `onLog` surfaces progress into the Journal (`AppState.appendBulkSystemLog`,
     /// mirroring `DNSApplier.onDiagnostic`'s closure-based logging) — the only
     /// window into this sequence once the installing process is about to
@@ -92,9 +91,9 @@ enum AppUpdateInstaller {
         let config = NSWorkspace.OpenConfiguration()
         config.createsNewApplicationInstance = true
         _ = try await NSWorkspace.shared.openApplication(at: runningAppURL, configuration: config)
-        onLog("New copy launched — asking this process to quit…")
-        NSApp.terminate(nil)
-        onLog("NSApp.terminate(nil) returned; if this is the last line seen, the quit handshake itself is what's stuck")
+        onLog("New copy launched")
+        // Quitting this process is the caller's job (AppState.installUpdateAndRelaunch),
+        // not this function's — see that call site for why.
     }
 
     private static func mount(_ dmgPath: URL) throws -> URL {

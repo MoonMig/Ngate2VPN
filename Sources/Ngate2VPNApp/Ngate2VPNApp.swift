@@ -535,21 +535,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     NSApp.reply(toApplicationShouldTerminate: true)
                 }
             }
-
-            // Wipe split-DNS files BEFORE killing the tunnel processes —
-            // once tunnels are gone the policy controller resets to empty,
-            // but the helper still needs to know which files we own.
-            await appState.dnsApplier.wipeAllRoutes()
-
-            appState.persist()
-            appState.shutdown()
-
-            // Final unconditional sweep of credential files. Each ngate
-            // process *would* clean up after itself via terminationHandler,
-            // but those handlers fire after our app exits, so the files
-            // would leak. Doing it here makes it deterministic.
-            TunnelConfigFile.removeAllStaleConfigs()
-
+            await appState.performQuitCleanup()
             watchdog.cancel()
             appState.appendBulkSystemLog("Quit cleanup finished, replying to terminate")
             NSApp.reply(toApplicationShouldTerminate: true)

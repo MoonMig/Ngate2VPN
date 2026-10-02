@@ -76,9 +76,18 @@ extension AppState {
     /// has no DMG asset (should not happen with this project's release
     /// workflow, but must not dead-end the button if it ever does).
     ///
-    /// On success this function does not return to its caller in any
-    /// meaningful sense — `NSApp.terminate` tears the app down through the
-    /// normal quit handshake once the new copy has launched.
+    /// On success this function does not return — it exits the process
+    /// itself after `performQuitCleanup()`, once the new copy has launched.
+    /// A real test showed `NSApp.terminate(nil)` reaching
+    /// `applicationShouldTerminate` (confirmed by its own entry log) but the
+    /// cleanup `Task` spawned inside it then never getting scheduled —
+    /// apparently specific to the moment a second instance of this same app
+    /// has just been launched via `NSWorkspace.openApplication`. Awaiting
+    /// `performQuitCleanup()` directly, in this already-running task, and
+    /// calling `exit(0)` ourselves sidesteps that without skipping any
+    /// cleanup: it is the exact same cleanup `applicationShouldTerminate`
+    /// uses for a normal Cmd+Q, just invoked synchronously in this call
+    /// chain instead of from a newly-spawned, apparently-starved `Task`.
     func installUpdateAndRelaunch() async {
         guard case .available(let version, let releaseURL, let downloadURL) = updateCheckStatus else { return }
         guard let downloadURL else {
@@ -96,6 +105,10 @@ extension AppState {
             try await AppUpdateInstaller.installAndRelaunch(dmgPath: dmgPath) { [weak self] message in
                 self?.appendBulkSystemLog(message)
             }
+            appendBulkSystemLog("Cleaning up before exiting…")
+            await performQuitCleanup()
+            appendBulkSystemLog("Exiting old process")
+            exit(0)
         } catch {
             let message: String
             if let checkError = error as? AppUpdateChecker.CheckError {

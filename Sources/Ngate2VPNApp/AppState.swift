@@ -260,6 +260,25 @@ final class AppState: ObservableObject {
         watchdogTask?.cancel()
         processManager.terminateAll()
     }
+
+    /// The full quit-time cleanup: DNS routes wiped, tunnels stopped,
+    /// credential temp files swept. Shared by `applicationShouldTerminate`
+    /// (the normal Cmd+Q / menu Quit path, via `NSApp.reply` after this
+    /// returns) and `installUpdateAndRelaunch` (which awaits this directly
+    /// in its own already-running task and then calls `exit(0)` itself —
+    /// see that function for why it does not go through
+    /// `NSApp.terminate`/`applicationShouldTerminate` at all).
+    func performQuitCleanup() async {
+        // DNS routes BEFORE killing tunnel processes — once they're gone the
+        // policy controller resets to empty, but the helper still needs to
+        // know which files we own.
+        await dnsApplier.wipeAllRoutes()
+        persist()
+        shutdown()
+        // Final unconditional sweep: each ngate's terminationHandler *would*
+        // delete its own credential file, but those fire after we're gone.
+        TunnelConfigFile.removeAllStaleConfigs()
+    }
     
     func removeTunnelAtomically(_ id: UUID) async {
         guard tunnels.contains(where: { $0.id == id }) else { return }
