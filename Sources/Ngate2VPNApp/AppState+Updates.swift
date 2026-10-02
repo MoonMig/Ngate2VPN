@@ -93,7 +93,9 @@ extension AppState {
             appendBulkSystemLog("Update downloaded: \(dmgPath.lastPathComponent)")
             updateCheckStatus = .installing(version: version)
             appendBulkSystemLog("Installing update \(version) and restarting…")
-            try await AppUpdateInstaller.installAndRelaunch(dmgPath: dmgPath)
+            try await AppUpdateInstaller.installAndRelaunch(dmgPath: dmgPath) { [weak self] message in
+                self?.appendBulkSystemLog(message)
+            }
         } catch {
             let message: String
             if let checkError = error as? AppUpdateChecker.CheckError {

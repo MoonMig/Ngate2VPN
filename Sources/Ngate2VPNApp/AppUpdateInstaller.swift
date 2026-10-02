@@ -33,17 +33,25 @@ enum AppUpdateInstaller {
     /// launches the new copy, and asks AppKit to terminate the current
     /// process through its normal quit handshake (`applicationShouldTerminate`),
     /// so tunnels and DNS routes are torn down cleanly instead of killed.
+    /// `onLog` surfaces progress into the Journal (`AppState.appendBulkSystemLog`,
+    /// mirroring `DNSApplier.onDiagnostic`'s closure-based logging) — the only
+    /// window into this sequence once the installing process is about to
+    /// replace and quit itself, with no debugger attached.
     @MainActor
-    static func installAndRelaunch(dmgPath: URL) async throws {
+    static func installAndRelaunch(dmgPath: URL, onLog: (String) -> Void = { _ in }) async throws {
+        onLog("Mounting update disk image…")
         let mountPoint = try mount(dmgPath)
         defer { unmount(mountPoint) }
+        onLog("Mounted at \(mountPoint.path)")
 
         guard let appInImage = findApp(in: mountPoint) else {
             throw InstallError.appNotFoundInImage
         }
+        onLog("Verifying the downloaded app's signature…")
         guard verifySameSigner(appInImage) else {
             throw InstallError.signatureMismatch
         }
+        onLog("Signature verified")
 
         // The mounted image is read-only; stage a local copy before handing
         // it to FileManager's replace API, which may want to consume its source.
@@ -57,11 +65,13 @@ enum AppUpdateInstaller {
         defer { try? FileManager.default.removeItem(at: stagedCopy) }
 
         let runningAppURL = Bundle.main.bundleURL
+        onLog("Replacing the installed app…")
         do {
             _ = try FileManager.default.replaceItemAt(runningAppURL, withItemAt: stagedCopy)
         } catch {
             throw InstallError.replaceFailed(error.localizedDescription)
         }
+        onLog("Replaced")
 
         // The downloaded DMG is deliberately quarantined (see
         // AppUpdateChecker.markAsQuarantinedDownload) so a user who opens it
@@ -77,11 +87,14 @@ enum AppUpdateInstaller {
         // broader "unidentified developer" question has already been
         // answered more specifically.
         clearQuarantine(runningAppURL)
+        onLog("Quarantine cleared, launching new copy…")
 
         let config = NSWorkspace.OpenConfiguration()
         config.createsNewApplicationInstance = true
         _ = try await NSWorkspace.shared.openApplication(at: runningAppURL, configuration: config)
+        onLog("New copy launched — asking this process to quit…")
         NSApp.terminate(nil)
+        onLog("NSApp.terminate(nil) returned; if this is the last line seen, the quit handshake itself is what's stuck")
     }
 
     private static func mount(_ dmgPath: URL) throws -> URL {

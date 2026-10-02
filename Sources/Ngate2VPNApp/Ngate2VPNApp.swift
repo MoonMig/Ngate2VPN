@@ -523,12 +523,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 3-second watchdog forces the reply through anyway so the user is
     /// never stuck unable to quit.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        appState.appendBulkSystemLog("applicationShouldTerminate entered")
         Task { @MainActor in
             // 3-second safety net — if anything below blocks for too long,
             // make sure terminate still goes through.
             let watchdog = Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
                 if !Task.isCancelled {
+                    appState.appendBulkSystemLog("Quit cleanup watchdog fired after 3s — replying anyway", level: .warning)
                     TunnelConfigFile.removeAllStaleConfigs()
                     NSApp.reply(toApplicationShouldTerminate: true)
                 }
@@ -549,6 +551,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             TunnelConfigFile.removeAllStaleConfigs()
 
             watchdog.cancel()
+            appState.appendBulkSystemLog("Quit cleanup finished, replying to terminate")
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
