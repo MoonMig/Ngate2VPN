@@ -476,11 +476,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             case .available(let version, _, _):
                 alert.alertStyle = .informational
                 alert.messageText = L("Update Available")
-                alert.informativeText = L("Version %@ is available.", version)
-                alert.addButton(withTitle: L("Download"))
+                let activeCount = appState.activeTunnelCount
+                alert.informativeText = activeCount > 0
+                    ? L("Version %@ is available. Installing it will disconnect %d active tunnel(s) and restart the app.", version, activeCount)
+                    : L("Version %@ is available. Installing it will restart the app.", version)
+                alert.addButton(withTitle: L("Install and Relaunch"))
                 alert.addButton(withTitle: "OK")
                 if alert.runModal() == .alertFirstButtonReturn {
-                    await appState.downloadAndRevealLatestRelease()
+                    await appState.installUpdateAndRelaunch()
                 }
             case .failed(let message):
                 alert.alertStyle = .warning
@@ -488,7 +491,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 alert.informativeText = message
                 alert.addButton(withTitle: "OK")
                 alert.runModal()
-            case .idle, .checking, .downloading:
+            case .idle, .checking, .downloading, .installing:
                 break
             }
         }

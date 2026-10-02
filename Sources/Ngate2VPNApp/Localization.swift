@@ -183,6 +183,17 @@ enum Localization {
         "Download": "Скачать",
         "Downloading…": "Загрузка…",
         "Downloading %@…": "Загрузка %@…",
+        "Install and Relaunch": "Установить и перезапустить",
+        "Installing…": "Установка…",
+        "Installing %@…": "Установка %@…",
+        "Disconnect and Restart?": "Отключить туннели и перезапустить?",
+        "This will disconnect %d active tunnel(s) and restart the app.":
+            "Это отключит активные туннели (%d) и перезапустит приложение.",
+        "Version %@ is available. Installing it will disconnect %d active tunnel(s) and restart the app.":
+            "Доступна версия %@. Установка отключит активные туннели (%d) и перезапустит приложение.",
+        "Version %@ is available. Installing it will restart the app.":
+            "Доступна версия %@. Установка перезапустит приложение.",
+        "Update Failed": "Не удалось обновить",
         "Automatically check for updates": "Автоматически проверять обновления",
 
         // Tray menu / app menu

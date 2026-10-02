@@ -167,6 +167,7 @@ enum UpdateCheckStatus: Equatable {
     case upToDate(checkedAt: Date)
     case available(version: String, releaseURL: URL, downloadURL: URL?)
     case downloading(version: String)
+    case installing(version: String)
     case failed(String)
 
     var availableVersion: String? {

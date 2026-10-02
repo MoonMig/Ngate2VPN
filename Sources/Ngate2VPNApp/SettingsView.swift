@@ -198,15 +198,17 @@ struct DNSHelperSection: View {
 
 // MARK: - Updates section
 
-/// No Developer ID / notarization means there is no silent auto-install path
-/// (see `AppUpdateChecker.swift`) — downloading the DMG and revealing it in
-/// Finder is as far as this automates; the user still drags it to
-/// /Applications and clears Gatekeeper, same as a manual download.
+/// No Developer ID / notarization means there is no App Store-style silent
+/// update: "Install and Relaunch" downloads the release DMG, verifies the app
+/// inside it is signed by this same build's identity (`AppUpdateInstaller`),
+/// replaces the running app, and restarts — the one thing it cannot do is
+/// skip Gatekeeper on a *different* signing identity, which is by design.
 /// `appState.updateCheckStatus` is a plain `@Published` property, so this
 /// view redraws on its own via the `@EnvironmentObject`, no extra plumbing needed.
 struct UpdatesSection: View {
     @EnvironmentObject private var appState: AppState
     @AppStorage(AppState.autoUpdateCheckKey) private var autoUpdateCheck: Bool = true
+    @State private var confirmingRestartWithActiveTunnels = false
 
     private var status: UpdateCheckStatus { appState.updateCheckStatus }
 
@@ -217,6 +219,7 @@ struct UpdatesSection: View {
         case .upToDate: return L("Up to date")
         case .available(let version, _, _): return L("Update available: %@", version)
         case .downloading(let version): return L("Downloading %@…", version)
+        case .installing(let version): return L("Installing %@…", version)
         case .failed(let message): return L("Error: %@", message)
         }
     }
@@ -224,7 +227,7 @@ struct UpdatesSection: View {
     private var statusColor: Color {
         switch status {
         case .idle, .upToDate: return DS.sec
-        case .checking, .downloading: return DS.orange
+        case .checking, .downloading, .installing: return DS.orange
         case .available: return DS.green
         case .failed: return DS.red
         }
@@ -235,9 +238,11 @@ struct UpdatesSection: View {
         return false
     }
 
-    private var isDownloading: Bool {
-        if case .downloading = status { return true }
-        return false
+    private var isBusyInstalling: Bool {
+        switch status {
+        case .downloading, .installing: return true
+        default: return false
+        }
     }
 
     var body: some View {
@@ -252,15 +257,15 @@ struct UpdatesSection: View {
                         .foregroundStyle(DS.sec)
                     Spacer()
                     if case .available = status {
-                        SmallButton(isDownloading ? "Downloading…" : "Download",
+                        SmallButton(isBusyInstalling ? "Installing…" : "Install and Relaunch",
                                     primary: false,
-                                    enabled: !isDownloading) {
-                            Task { await appState.downloadAndRevealLatestRelease() }
+                                    enabled: !isBusyInstalling) {
+                            requestInstall()
                         }
                     }
                     SmallButton(isChecking ? "Checking…" : "Check for Updates",
                                 primary: true,
-                                enabled: !isChecking && !isDownloading) {
+                                enabled: !isChecking && !isBusyInstalling) {
                         Task { await appState.checkForUpdates(manual: true) }
                     }
                 }
@@ -269,6 +274,22 @@ struct UpdatesSection: View {
                       icon: "arrow.triangle.2.circlepath",
                       value: $autoUpdateCheck)
                 .onChange(of: autoUpdateCheck) { _ in appState.autoUpdateCheckSettingChanged() }
+        }
+        .alert(L("Disconnect and Restart?"), isPresented: $confirmingRestartWithActiveTunnels) {
+            Button(L("Cancel"), role: .cancel) {}
+            Button(L("Install and Relaunch"), role: .destructive) {
+                Task { await appState.installUpdateAndRelaunch() }
+            }
+        } message: {
+            Text(L("This will disconnect %d active tunnel(s) and restart the app.", appState.activeTunnelCount))
+        }
+    }
+
+    private func requestInstall() {
+        if appState.activeTunnelCount > 0 {
+            confirmingRestartWithActiveTunnels = true
+        } else {
+            Task { await appState.installUpdateAndRelaunch() }
         }
     }
 }

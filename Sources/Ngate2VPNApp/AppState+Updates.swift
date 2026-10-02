@@ -63,13 +63,23 @@ extension AppState {
         }
     }
 
-    /// Downloads the release's DMG into `~/Downloads` and reveals it in
-    /// Finder — the same end state as downloading it by hand from the
-    /// release page, just started from the in-app prompt. Falls back to
-    /// simply opening the release page if it has no DMG asset to download
-    /// (should not happen with this project's release workflow, but a future
-    /// release without one must not dead-end the button).
-    func downloadAndRevealLatestRelease() async {
+    /// Tunnels that would be dropped by restarting right now — the UI uses
+    /// this to ask for confirmation before `installUpdateAndRelaunch()`.
+    var activeTunnelCount: Int {
+        runtime.values.filter { [.starting, .running, .degraded].contains($0.status) }.count
+    }
+
+    /// Downloads the release's DMG, verifies the app inside it is signed by
+    /// this same build's identity, replaces the running app with it, and
+    /// relaunches — see `AppUpdateInstaller` for why each of those steps
+    /// matters. Falls back to simply opening the release page if the release
+    /// has no DMG asset (should not happen with this project's release
+    /// workflow, but must not dead-end the button if it ever does).
+    ///
+    /// On success this function does not return to its caller in any
+    /// meaningful sense — `NSApp.terminate` tears the app down through the
+    /// normal quit handshake once the new copy has launched.
+    func installUpdateAndRelaunch() async {
         guard case .available(let version, let releaseURL, let downloadURL) = updateCheckStatus else { return }
         guard let downloadURL else {
             NSWorkspace.shared.open(releaseURL)
@@ -77,16 +87,25 @@ extension AppState {
         }
         updateCheckStatus = .downloading(version: version)
         do {
-            let destination = try await AppUpdateChecker.downloadAsset(
+            let dmgPath = try await AppUpdateChecker.downloadAsset(
                 from: downloadURL, suggestedName: downloadURL.lastPathComponent
             )
-            appendBulkSystemLog("Update downloaded: \(destination.lastPathComponent)")
-            NSWorkspace.shared.activateFileViewerSelecting([destination])
+            appendBulkSystemLog("Update downloaded: \(dmgPath.lastPathComponent)")
+            updateCheckStatus = .installing(version: version)
+            appendBulkSystemLog("Installing update \(version) and restarting…")
+            try await AppUpdateInstaller.installAndRelaunch(dmgPath: dmgPath)
         } catch {
-            let message = String(describing: error as? AppUpdateChecker.CheckError ?? .network(error.localizedDescription))
-            appendBulkSystemLog("Update download failed: \(message)", level: .warning)
-            showAlert(title: "Download Failed", message: message)
+            let message: String
+            if let checkError = error as? AppUpdateChecker.CheckError {
+                message = String(describing: checkError)
+            } else if let installError = error as? AppUpdateInstaller.InstallError {
+                message = installError.description
+            } else {
+                message = error.localizedDescription
+            }
+            appendBulkSystemLog("Update install failed: \(message)", level: .warning)
+            updateCheckStatus = .available(version: version, releaseURL: releaseURL, downloadURL: downloadURL)
+            showAlert(title: "Update Failed", message: message)
         }
-        updateCheckStatus = .available(version: version, releaseURL: releaseURL, downloadURL: downloadURL)
     }
 }
