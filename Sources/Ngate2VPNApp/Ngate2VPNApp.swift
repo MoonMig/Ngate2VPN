@@ -303,16 +303,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         installEditShortcutFallback()
         for name in [NSApplication.didBecomeActiveNotification, NSWindow.didBecomeKeyNotification] {
             NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                DispatchQueue.main.async { self?.pruneMainMenu() }
+                DispatchQueue.main.async {
+                    self?.pruneMainMenu()
+                    self?.relabelStandardMenuItemsForAppLanguage()
+                }
             }
         }
         // Any menu gaining an item (SwiftUI rebuilding the main menu, the tray menu
         // being rebuilt) re-runs the prune; it is cheap and idempotent, and removing
         // an item posts a different notification, so this cannot loop.
         NotificationCenter.default.addObserver(forName: NSMenu.didAddItemNotification, object: nil, queue: .main) { [weak self] _ in
-            DispatchQueue.main.async { self?.pruneMainMenu() }
+            DispatchQueue.main.async {
+                self?.pruneMainMenu()
+                self?.relabelStandardMenuItemsForAppLanguage()
+            }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.pruneMainMenu() }
+        // The language picker in Settings doesn't rebuild the main menu (only
+        // the tab view rebuilds via `.id(appLanguage)`), so relabeling needs
+        // its own trigger for the instant-switch the rest of the UI gets.
+        NotificationCenter.default.addObserver(forName: .appLanguageChanged, object: nil, queue: .main) { [weak self] _ in
+            DispatchQueue.main.async { self?.relabelStandardMenuItemsForAppLanguage() }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.pruneMainMenu()
+            self?.relabelStandardMenuItemsForAppLanguage()
+        }
+    }
+
+    /// Standard AppKit-provided items (About, Hide, Hide Others, Show All,
+    /// Quit) normally follow the *system* language via `CFBundleLocalizations`,
+    /// not this app's in-app language picker — by design, the same reason
+    /// `pruneMainMenu` identifies menus by contents rather than title (titles
+    /// are localized and out of our control). That's fine when the picker is
+    /// left on "System," but when the user explicitly picked English or
+    /// Russian, leaving these few items in whatever language macOS itself
+    /// happens to be reads as a bug, not a deliberate split. Identified by
+    /// action selector — never by title — exactly like `pruneMainMenu`.
+    func relabelStandardMenuItemsForAppLanguage() {
+        guard AppLanguage.stored != .system else { return }
+        guard let appMenu = NSApp.mainMenu?.items.first?.submenu else { return }
+        let appName = ProcessInfo.processInfo.processName
+        for item in appMenu.items {
+            switch item.action {
+            case #selector(NSApplication.orderFrontStandardAboutPanel(_:)):
+                item.title = L("About %@", appName)
+            case #selector(NSApplication.hide(_:)):
+                item.title = L("Hide %@", appName)
+            case NSSelectorFromString("hideOtherApplications:"):
+                item.title = L("Hide Others")
+            case NSSelectorFromString("unhideAllApplications:"):
+                item.title = L("Show All")
+            case #selector(NSApplication.terminate(_:)):
+                item.title = L("Quit %@", appName)
+            default:
+                break
+            }
+        }
     }
 
     private func mainWindowWillClose() {
@@ -406,37 +452,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func showAboutPanel() {
         NSApp.activate(ignoringOtherApps: true)
 
+        // AppKit's own "Version" label (from `.applicationVersion`) is
+        // chrome it localizes itself from the *system* language, the same
+        // category as the standard Hide/Quit menu items — except here there
+        // is no menu item to relabel after the fact, since it's baked into
+        // the panel's fixed layout. Suppressing it entirely (both options
+        // below set to "") and writing our own fully-localized version line
+        // into the credits text instead sidesteps that rather than fighting it.
+        // AppKit's own version slot sits in a gap between the app-name
+        // heading and the credits view, roughly centered in it. Our version
+        // line is now the first paragraph *inside* the credits view instead,
+        // so without help it sits flush against the top of that view. A
+        // paragraph style approximates the original spacing: some room
+        // above to push it down off the credits view's top edge, a bit more
+        // below to separate it from "Developed by" as its own line.
+        // Explicit on BOTH paragraphs: once ANY run in the string carries an
+        // explicit `.paragraphStyle`, AppKit stops applying the credits
+        // view's own default (centered) style to runs that don't have one —
+        // an unstyled "Developed by" paragraph fell back to plain left
+        // alignment instead of inheriting the view's center.
+        let versionStyle = NSMutableParagraphStyle()
+        versionStyle.alignment = .center
+        versionStyle.paragraphSpacingBefore = 0
+        versionStyle.paragraphSpacing = 14
+        let creditsStyle = NSMutableParagraphStyle()
+        creditsStyle.alignment = .center
+
+        // `paragraphSpacingBefore` bottoms out at 0 — the remaining gap above
+        // this line is the credits view's own top inset, which no paragraph
+        // attribute controls. A positive baseline offset nudges the glyphs
+        // themselves upward within their line box instead.
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         let credits = NSMutableAttributedString(
-            string: "Developed by ",
+            string: L("Version %@", version) + "\n",
             attributes: [
                 .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
-                .foregroundColor: NSColor.labelColor
+                .foregroundColor: NSColor.secondaryLabelColor,
+                .paragraphStyle: versionStyle,
+                .baselineOffset: 11
             ]
         )
+        credits.append(NSAttributedString(
+            string: L("Developed by "),
+            attributes: [
+                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+                .foregroundColor: NSColor.labelColor,
+                .paragraphStyle: creditsStyle
+            ]
+        ))
         credits.append(NSAttributedString(
             string: "@H3mul",
             attributes: [
                 .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
                 .foregroundColor: NSColor.linkColor,
                 .link: URL(string: "tg://H3mul") as Any,
-                .underlineStyle: NSUnderlineStyle.single.rawValue
+                .underlineStyle: NSUnderlineStyle.single.rawValue,
+                .paragraphStyle: creditsStyle
             ]
         ))
 
-        // We deliberately omit a build number here — the trailing
-        // "(1)" the standard panel shows by default is noise: we never
-        // increment it independently of the version, so it just adds
-        // clutter without conveying any information.
-        //
         // Calling the `(options:)` overload is safe — it's a separate
         // Obj-C selector (`orderFrontStandardAboutPanelWithOptions:`),
         // distinct from the one we swizzled
-        // (`orderFrontStandardAboutPanel:`). So no recursion, and the
-        // options dictionary is the one that actually drives version
-        // text and credits.
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        // (`orderFrontStandardAboutPanel:`). So no recursion.
         NSApp.orderFrontStandardAboutPanel(options: [
-            .applicationVersion:                                version,
+            .applicationVersion:                                "",
             NSApplication.AboutPanelOptionKey(rawValue: "Version"): "",
             .credits:                                            credits
         ])

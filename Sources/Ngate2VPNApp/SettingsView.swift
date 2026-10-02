@@ -15,10 +15,14 @@ struct AppSettingsView: View {
         FileManager.default.isExecutableFile(atPath: appState.binaryPath)
     }
 
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 14) {
-                FormBlock("Application") {
+                FormBlock("Application", content: {
                     FieldRow(label: "Binary") {
                         HStack(spacing: 6) {
                             TextField("/path/to/client", text: $appState.binaryPath).plain()
@@ -32,7 +36,11 @@ struct AppSettingsView: View {
                     ToggleRow(label: "Auto-connect on launch",  icon: "bolt.fill",       value: $autoConnect)
                     ToggleRow(label: "Pre-warm tunnels (faster connect)", icon: "flame.fill", value: $prewarmTunnels)
                         .onChange(of: prewarmTunnels) { _ in appState.prewarmSettingChanged() }
-                }
+                }, accessory: {
+                    Text("v\(appVersion)")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(DS.sec)
+                })
 
                 FormBlock("Notifications") {
                     ToggleRow(label: "Show error alerts",

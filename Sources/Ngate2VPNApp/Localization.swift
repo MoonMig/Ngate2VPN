@@ -206,6 +206,17 @@ enum Localization {
         "Check for Updates…": "Проверить обновления…",
         "Click to copy the IP address": "Нажмите, чтобы скопировать IP-адрес",
 
+        // Standard macOS app-menu items — normally follow the system
+        // language, overridden to match the in-app picker when it isn't
+        // "System" (see relabelStandardMenuItemsForAppLanguage).
+        "About %@": "О программе %@",
+        "Hide %@": "Скрыть %@",
+        "Hide Others": "Скрыть остальные",
+        "Show All": "Показать все",
+        "Quit %@": "Выйти из %@",
+        "Developed by ": "Разработано ",
+        "Version %@": "Версия %@",
+
         // Alerts: titles
         "Delete Error": "Ошибка удаления",
         "Binary Not Found": "Бинарник не найден",

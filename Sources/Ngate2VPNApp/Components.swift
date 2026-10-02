@@ -3,18 +3,31 @@ import AppKit
 
 // MARK: - Reusable helpers
 
-struct FormBlock<Content: View>: View {
+struct FormBlock<Content: View, Accessory: View>: View {
     let title: String
     @ViewBuilder let content: () -> Content
-    init(_ title: String, @ViewBuilder content: @escaping () -> Content) {
-        self.title = title; self.content = content
+    @ViewBuilder let accessory: () -> Accessory
+
+    init(_ title: String, @ViewBuilder content: @escaping () -> Content) where Accessory == EmptyView {
+        self.title = title; self.content = content; self.accessory = { EmptyView() }
     }
+
+    /// With a trailing `accessory` next to the section title — e.g. the app
+    /// version shown at the right edge of the "Application" header.
+    init(_ title: String, @ViewBuilder content: @escaping () -> Content, @ViewBuilder accessory: @escaping () -> Accessory) {
+        self.title = title; self.content = content; self.accessory = accessory
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(L(title).uppercased())
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(DS.sec)
-                .padding(.horizontal, 2).padding(.bottom, 5)
+            HStack(spacing: 6) {
+                Text(L(title).uppercased())
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(DS.sec)
+                Spacer()
+                accessory()
+            }
+            .padding(.horizontal, 2).padding(.bottom, 5)
             VStack(spacing: 0) { content() }
                 .background(DS.surface)
                 .clipShape(RoundedRectangle(cornerRadius: DS.rL))
