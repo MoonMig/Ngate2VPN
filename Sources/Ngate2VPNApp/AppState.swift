@@ -64,6 +64,8 @@ final class AppState: ObservableObject {
     var activeStartupTunnelIDs = Set<UUID>()
     var watchdogTask: Task<Void, Never>?
     let tokenMonitor = TokenMonitor()
+    @Published var updateCheckStatus: UpdateCheckStatus = .idle
+    var updateCheckTask: Task<Void, Never>?
     var tokenStateKnown = false
     var tokenPresent = false
 
@@ -163,10 +165,12 @@ final class AppState: ObservableObject {
         _ = dnsApplier
 
         startPrewarmSupport()
+        startAutoUpdateChecking()
     }
 
     deinit {
         watchdogTask?.cancel()
+        updateCheckTask?.cancel()
         processManager.terminateAll()
     }
     

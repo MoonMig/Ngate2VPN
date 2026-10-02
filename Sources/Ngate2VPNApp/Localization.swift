@@ -174,6 +174,14 @@ enum Localization {
         "Install": "Установить",
         "Uninstall": "Удалить",
         "Hold Default DNS": "Не менять системный DNS",
+        "Updates": "Обновления",
+        "Not checked yet": "Ещё не проверялось",
+        "Up to date": "Актуальная версия",
+        "Update available: %@": "Доступно обновление: %@",
+        "Check for Updates": "Проверить обновления",
+        "Checking…": "Проверка…",
+        "View": "Открыть",
+        "Automatically check for updates": "Автоматически проверять обновления",
 
         // Tray menu / app menu
         "Open Ngate VPN": "Открыть Ngate VPN",

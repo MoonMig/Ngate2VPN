@@ -43,6 +43,9 @@ struct AppSettingsView: View {
                 DNSHelperSection()
                     .environmentObject(appState)
 
+                UpdatesSection()
+                    .environmentObject(appState)
+
                 FormBlock("Interface") {
                     FieldRow(label: "Theme") {
                         Picker("", selection: $appTheme) {
@@ -189,6 +192,74 @@ struct DNSHelperSection: View {
             case .applying:
                 break
             }
+        }
+    }
+}
+
+// MARK: - Updates section
+
+/// No Developer ID / notarization means there is no silent auto-install path
+/// (see `AppUpdateChecker.swift`) — this just finds out whether a newer
+/// release exists and links to it. `appState.updateCheckStatus` is a plain
+/// `@Published` property, so this view redraws on its own via the
+/// `@EnvironmentObject`, no extra plumbing needed.
+struct UpdatesSection: View {
+    @EnvironmentObject private var appState: AppState
+    @AppStorage(AppState.autoUpdateCheckKey) private var autoUpdateCheck: Bool = true
+
+    private var status: UpdateCheckStatus { appState.updateCheckStatus }
+
+    private var statusText: String {
+        switch status {
+        case .idle: return L("Not checked yet")
+        case .checking: return L("Checking…")
+        case .upToDate: return L("Up to date")
+        case .available(let version, _): return L("Update available: %@", version)
+        case .failed(let message): return L("Error: %@", message)
+        }
+    }
+
+    private var statusColor: Color {
+        switch status {
+        case .idle, .upToDate: return DS.sec
+        case .checking: return DS.orange
+        case .available: return DS.green
+        case .failed: return DS.red
+        }
+    }
+
+    private var isChecking: Bool {
+        if case .checking = status { return true }
+        return false
+    }
+
+    var body: some View {
+        FormBlock("Updates") {
+            FieldRow(label: "Status") {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(statusColor)
+                        .frame(width: 8, height: 8)
+                    Text(statusText)
+                        .font(.system(size: 12))
+                        .foregroundStyle(DS.sec)
+                    Spacer()
+                    if case .available = status {
+                        SmallButton("View", primary: false) {
+                            appState.openLatestReleasePage()
+                        }
+                    }
+                    SmallButton(isChecking ? "Checking…" : "Check for Updates",
+                                primary: true,
+                                enabled: !isChecking) {
+                        Task { await appState.checkForUpdates(manual: true) }
+                    }
+                }
+            }
+            ToggleRow(label: "Automatically check for updates",
+                      icon: "arrow.triangle.2.circlepath",
+                      value: $autoUpdateCheck)
+                .onChange(of: autoUpdateCheck) { _ in appState.autoUpdateCheckSettingChanged() }
         }
     }
 }
