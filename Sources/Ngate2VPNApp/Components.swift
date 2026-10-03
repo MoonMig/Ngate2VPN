@@ -38,6 +38,13 @@ struct FormBlock<Content: View, Accessory: View>: View {
 
 struct FieldRow<Content: View>: View {
     let label: String
+    /// Overrides the default per-language column width below. For a label
+    /// that's the same short length in both languages (e.g. "Status" /
+    /// "Статус"), the blanket 84pt Russian width — sized for much longer
+    /// words — just pushes it needlessly to the right; passing the
+    /// English-sized 58pt here keeps it visually in the same place in both
+    /// languages.
+    var labelWidth: CGFloat? = nil
     @ViewBuilder let content: () -> Content
     var body: some View {
         HStack(spacing: 10) {
@@ -47,7 +54,7 @@ struct FieldRow<Content: View>: View {
                 .lineLimit(1)
                 // Russian labels ("Название", "Бинарник") are wider than the
                 // English ones; a too-narrow column wrapped their last letter.
-                .frame(width: AppLanguage.effective == .ru ? 84 : 58, alignment: .trailing)
+                .frame(width: labelWidth ?? (AppLanguage.effective == .ru ? 84 : 58), alignment: .trailing)
             content().frame(maxWidth: .infinity)
         }
         .padding(.horizontal, 14).padding(.vertical, 11)

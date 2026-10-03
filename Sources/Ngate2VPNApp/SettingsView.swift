@@ -148,7 +148,7 @@ struct DNSHelperSection: View {
 
     var body: some View {
         FormBlock("DNS Helper") {
-            FieldRow(label: "Status") {
+            FieldRow(label: "Status", labelWidth: 58) {
                 HStack(spacing: 6) {
                     Circle()
                         .fill(statusColor)
@@ -255,7 +255,7 @@ struct UpdatesSection: View {
 
     var body: some View {
         FormBlock("Updates") {
-            FieldRow(label: "Status") {
+            FieldRow(label: "Status", labelWidth: 58) {
                 HStack(spacing: 6) {
                     Circle()
                         .fill(statusColor)
