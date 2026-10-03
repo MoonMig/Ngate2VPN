@@ -510,6 +510,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 .paragraphStyle: creditsStyle
             ]
         ))
+        credits.append(NSAttributedString(
+            string: "\ngithub.com/MoonMig/Ngate2VPN",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+                .foregroundColor: NSColor.linkColor,
+                .link: URL(string: "https://github.com/MoonMig/Ngate2VPN") as Any,
+                .underlineStyle: NSUnderlineStyle.single.rawValue,
+                .paragraphStyle: creditsStyle
+            ]
+        ))
 
         // Calling the `(options:)` overload is safe — it's a separate
         // Obj-C selector (`orderFrontStandardAboutPanelWithOptions:`),

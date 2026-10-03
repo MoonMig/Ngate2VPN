@@ -6,7 +6,8 @@ import AppKit
 // for why this never downloads or installs anything itself.
 extension AppState {
     static let autoUpdateCheckKey = "autoUpdateCheck"
-    static let autoUpdateCheckInterval: UInt64 = 24 * 60 * 60 * 1_000_000_000
+    static let lastUpdateCheckAtKey = "lastUpdateCheckAt"
+    static let autoUpdateCheckIntervalSeconds: TimeInterval = 24 * 60 * 60
 
     /// Not cached on `AppState` — read fresh each time so toggling the
     /// Settings switch takes effect immediately, the same as other plain
@@ -15,17 +16,32 @@ extension AppState {
         (UserDefaults.standard.object(forKey: Self.autoUpdateCheckKey) as? Bool) ?? true
     }
 
-    /// Starts (or restarts) the periodic background check: once shortly after
-    /// launch, then every 24 h. Called once from `init()` and again whenever
-    /// the Settings toggle changes.
+    /// When any check (automatic *or* manual) last actually hit the network.
+    /// Persisted so relaunching the app — including several times a day —
+    /// doesn't re-hit GitHub each time; only wall-clock time since this
+    /// moment counts toward the next automatic check.
+    private var lastUpdateCheckDate: Date? {
+        get { UserDefaults.standard.object(forKey: Self.lastUpdateCheckAtKey) as? Date }
+        set { UserDefaults.standard.set(newValue, forKey: Self.lastUpdateCheckAtKey) }
+    }
+
+    /// Starts (or restarts) the periodic background check. Each iteration
+    /// sleeps until 24 h have actually elapsed since `lastUpdateCheckDate`
+    /// (computed fresh from the persisted timestamp, not a fixed delay), so
+    /// restarting the app shortly after a check — automatic or manual — does
+    /// not trigger another one; a 10 s floor just keeps a well-overdue check
+    /// (app was quit for days) from firing the instant launch finishes.
+    /// Called once from `init()` and again whenever the Settings toggle changes.
     func startAutoUpdateChecking() {
         updateCheckTask?.cancel()
         guard autoUpdateCheckEnabled else { return }
         updateCheckTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 10_000_000_000)
             while let self, !Task.isCancelled {
+                let elapsed = Date().timeIntervalSince(self.lastUpdateCheckDate ?? .distantPast)
+                let delay = max(10, AppState.autoUpdateCheckIntervalSeconds - elapsed)
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                guard !Task.isCancelled else { break }
                 await self.checkForUpdates(manual: false)
-                try? await Task.sleep(nanoseconds: AppState.autoUpdateCheckInterval)
             }
         }
     }
@@ -35,12 +51,15 @@ extension AppState {
         startAutoUpdateChecking()
     }
 
-    /// `manual` distinguishes the Settings button (failures are shown in the
-    /// status row) from the periodic background check (a flaky network call
-    /// once a day is not worth a journal line unless it actually finds
-    /// something — only a found update is logged).
+    /// `manual` distinguishes the Settings/menu-triggered check (failures are
+    /// shown directly) from the periodic background one (a flaky network
+    /// call once a day is not worth a journal line unless it actually finds
+    /// something — only a found update is logged). Every check, regardless
+    /// of `manual`, updates `lastUpdateCheckDate` — a manual check also
+    /// pushes back the next automatic one, so the two don't fire back to back.
     func checkForUpdates(manual: Bool) async {
         updateCheckStatus = .checking
+        defer { lastUpdateCheckDate = Date() }
         let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
         do {
             let release = try await AppUpdateChecker.fetchLatestRelease()
