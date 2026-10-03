@@ -80,6 +80,13 @@ struct TitlebarTabView: View {
                 }
             }
         }
+        // The pill "track" the buttons sit inside of (Shadowrocket-style
+        // segmented control) — a shade dimmer than the selected tab's own
+        // capsule (`DS.surfaceHi` in TitleTabButton) so the active tab reads
+        // as sitting slightly above the track, not flush with it.
+        .padding(4)
+        .background(Capsule().fill(DS.surface.opacity(0.6)))
+        .overlay(Capsule().stroke(DS.border, lineWidth: 1))
         .fixedSize()
         .padding(.horizontal, 6)
         .id(appLanguage)
@@ -111,7 +118,7 @@ struct TitleTabButton: View {
         // which eliminates the macOS focus ring at the source.
         ZStack {
             Capsule()
-                .fill(hovered ? DS.surfaceHi.opacity(0.5) : Color.clear)
+                .fill(selected ? DS.surfaceHi : (hovered ? DS.surfaceHi.opacity(0.5) : Color.clear))
 
             HStack(spacing: 5) {
                 Image(systemName: tab.icon)

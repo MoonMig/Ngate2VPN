@@ -943,8 +943,12 @@ final class MainToolbar: NSToolbar, NSToolbarDelegate, @unchecked Sendable {
         let tabView = TitlebarTabView().environmentObject(appState)
         let hosting = FocusRingFreeHostingView(rootView: tabView)
         hosting.translatesAutoresizingMaskIntoConstraints = false
+        // 26pt buttons + 4pt top/bottom padding for the surrounding track
+        // pill (see TitlebarTabView) — this fixed height must grow whenever
+        // that padding does, or the hosting view clips/squeezes the pill
+        // right back out of existence.
         NSLayoutConstraint.activate([
-            hosting.heightAnchor.constraint(equalToConstant: 28)
+            hosting.heightAnchor.constraint(equalToConstant: 34)
         ])
 
         let item = NSToolbarItem(itemIdentifier: .tabBar)
